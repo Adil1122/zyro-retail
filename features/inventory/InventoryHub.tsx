@@ -255,28 +255,28 @@ export function InventoryHub() {
             <div className="flex flex-wrap items-center gap-2">
               {isOwner && (
                 <Link href="/inventory/categories">
-                  <Button variant="secondary" size="sm">
+                  <Button variant="secondary" size="lg">
                     <FolderKanban className="w-4 h-4" /> Categories
                   </Button>
                 </Link>
               )}
               <Link href="/inventory/count">
-                <Button variant="secondary" size="sm">
+                <Button variant="secondary" size="lg">
                   <ClipboardCheck className="w-4 h-4" /> Count stock
                 </Button>
               </Link>
               <Link href="/inventory/measured">
-                <Button variant="secondary" size="sm">
+                <Button variant="secondary" size="lg">
                   <Ruler className="w-4 h-4" /> Measured
                 </Button>
               </Link>
               <Link href="/inventory/photos">
-                <Button variant="secondary" size="sm">
+                <Button variant="secondary" size="lg">
                   <Camera className="w-4 h-4" /> Photos
                 </Button>
               </Link>
               <Link href="/inventory/items/new">
-                <Button variant="primary">
+                <Button variant="dark" size="lg">
                   <Plus className="w-4 h-4" /> Add item
                 </Button>
               </Link>

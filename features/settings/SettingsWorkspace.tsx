@@ -33,15 +33,38 @@ import type { EmployeeRecord, FbrMode, ShopKitId } from '@/types';
 
 type SectionId = 'shop' | 'staff' | 'device' | 'printer' | 'receipt' | 'fbr' | 'lang' | 'conn';
 
-const SECTIONS: Array<{ id: SectionId; label: string; icon: React.ReactNode }> = [
-  { id: 'shop', label: 'Shop & kit', icon: <Store className="w-4 h-4" /> },
-  { id: 'staff', label: 'Permissions', icon: <Shield className="w-4 h-4" /> },
-  { id: 'device', label: 'Branch & counter', icon: <Monitor className="w-4 h-4" /> },
-  { id: 'printer', label: 'Receipt printer', icon: <Printer className="w-4 h-4" /> },
-  { id: 'receipt', label: 'Receipt layout', icon: <ReceiptIcon className="w-4 h-4" /> },
-  { id: 'fbr', label: 'FBR POS tax', icon: <Building2 className="w-4 h-4" /> },
-  { id: 'lang', label: 'Language', icon: <Globe className="w-4 h-4" /> },
-  { id: 'conn', label: 'Offline & demo', icon: <WifiOff className="w-4 h-4" /> },
+const SECTION_GROUPS: Array<{
+  title: string;
+  items: Array<{ id: SectionId; label: string; sub: string; icon: React.ReactNode }>;
+}> = [
+  {
+    title: 'Shop and counter',
+    items: [
+      { id: 'shop', label: 'Shop & kit', sub: 'Name, address, branches, kit', icon: <Store className="w-[18px] h-[18px]" /> },
+      { id: 'staff', label: 'Staff & permissions', sub: 'Roles, counter PINs', icon: <Shield className="w-[18px] h-[18px]" /> },
+      { id: 'device', label: 'This device', sub: 'Branch, Counter 1, shift state', icon: <Monitor className="w-[18px] h-[18px]" /> },
+    ],
+  },
+  {
+    title: 'Language and hardware',
+    items: [
+      { id: 'lang', label: 'Language', sub: 'English · Roman Urdu · اردو', icon: <Globe className="w-[18px] h-[18px]" /> },
+      { id: 'printer', label: 'Printer', sub: '80 mm thermal, queue', icon: <Printer className="w-[18px] h-[18px]" /> },
+    ],
+  },
+  {
+    title: 'Tax and receipts',
+    items: [
+      { id: 'receipt', label: 'Receipt footer', sub: 'Return note, Wi-Fi, preview', icon: <ReceiptIcon className="w-[18px] h-[18px]" /> },
+      { id: 'fbr', label: 'FBR POS', sub: 'STRN, POS ID, sync mode', icon: <Building2 className="w-[18px] h-[18px]" /> },
+    ],
+  },
+  {
+    title: 'Offline & demo',
+    items: [
+      { id: 'conn', label: 'Offline & reset', sub: 'Demo controls, reset state', icon: <WifiOff className="w-[18px] h-[18px]" /> },
+    ],
+  },
 ];
 
 export function SettingsWorkspace() {
@@ -121,35 +144,59 @@ export function SettingsWorkspace() {
   return (
     <div className="space-y-5">
       <PageHeader
-        eyebrow="Owner configuration"
+        eyebrow="Main branch · owner only"
         title="Settings"
         subtitle="Configure shop profile, thermal printer, FBR POS ID, language, and offline mode."
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        {/* Section selector */}
-        <div className="lg:col-span-3">
-          <Card padding="sm" className="flex lg:flex-col gap-1 overflow-x-auto">
-            {SECTIONS.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => setSection(s.id)}
-                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-[10px] text-[13px] font-semibold whitespace-nowrap transition-colors ${
-                  section === s.id
-                    ? 'bg-[#08343A] text-white'
-                    : 'text-[#3D5357] hover:bg-[#F1EBE3]'
-                }`}
-              >
-                {s.icon}
-                <span>{s.label}</span>
-              </button>
-            ))}
-          </Card>
-        </div>
+      <div className="grid grid-cols-1 lg:grid-cols-[292px_minmax(0,1fr)] gap-6 items-start">
+        {/* Section selector matching Settings.html */}
+        <nav aria-label="Settings sections" className="space-y-3 lg:border-e lg:border-[#E7E0D7] lg:pe-5">
+          {SECTION_GROUPS.map((grp) => (
+            <div key={grp.title} className="space-y-0.5">
+              <h2 className="px-1 pt-1.5 pb-1 text-[12px] font-bold uppercase tracking-[0.06em] text-[#52666A]">
+                {grp.title}
+              </h2>
+              <div className="flex lg:flex-col gap-1 overflow-x-auto pb-1 lg:pb-0">
+                {grp.items.map((s) => {
+                  const on = section === s.id;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => setSection(s.id)}
+                      aria-current={on ? 'page' : undefined}
+                      className={`row min-h-[52px] flex items-center gap-3 px-2.5 py-1.5 rounded-[12px] text-start transition-all shrink-0 lg:w-full ${
+                        on
+                          ? 'bg-white shadow-[0_1px_2px_rgba(10,28,22,0.08)] text-[#0B2A2F]'
+                          : 'bg-transparent text-[#3D5357]'
+                      }`}
+                    >
+                      <span
+                        className={`w-[34px] h-[34px] rounded-[10px] flex items-center justify-center shrink-0 ${
+                          on
+                            ? 'bg-[#08343A] text-white'
+                            : 'bg-[#EAE3D9] text-[#3D5357]'
+                        }`}
+                      >
+                        {s.icon}
+                      </span>
+                      <span className="flex-1 min-w-0 flex flex-col">
+                        <span className="text-[15px] font-semibold leading-tight text-[#0B2A2F]">
+                          {s.label}
+                        </span>
+                        <span className="text-[12px] text-[#52666A] truncate">{s.sub}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </nav>
 
         {/* Section body */}
-        <div className="lg:col-span-9">
+        <div className="min-w-0 max-w-[720px]">
           {section === 'shop' && (
             <Card className="space-y-4">
               <h2 className="font-display text-[18px] font-bold text-[#0B2A2F]">

@@ -90,7 +90,7 @@ html[lang="ur"] body {
 }
 
 .rs {
-  font-size: 0.65em;
+  font-size: 0.6em;
   font-weight: 500;
   margin-inline-end: 0.24em;
   letter-spacing: 0;
@@ -131,7 +131,7 @@ select:focus-visible,
 
 .bp {
   background-color: #E58A4E;
-  color: #0B2A2F;
+  color: #08343A;
   transition: background-color 0.1s ease-out, transform 0.1s ease-out;
 }
 .bp:hover:not(:disabled) {
@@ -186,6 +186,51 @@ select:focus-visible,
 }
 .bd:active:not(:disabled) {
   transform: scale(0.98);
+}
+
+.bt:hover {
+  color: #08343A;
+  text-decoration: underline;
+}
+
+.side {
+  transition: background-color 0.15s ease-out;
+}
+.side:hover {
+  background-color: rgba(255, 255, 255, 0.07);
+}
+
+.rail {
+  transition: background-color 0.15s ease-out, color 0.15s ease-out;
+}
+.rail:hover {
+  background-color: rgba(255, 255, 255, 0.07);
+  color: #FFFFFF;
+}
+
+.row {
+  transition: background-color 0.12s ease-out;
+}
+.row:hover {
+  background-color: #FBF8F4;
+}
+
+.opt {
+  transition: border-color 0.15s ease-out;
+}
+.opt:hover {
+  border-color: #E2B48F;
+}
+
+.key {
+  transition: background-color 0.1s, transform 0.1s;
+}
+.key:hover {
+  background-color: #F1EBE3;
+}
+.key:active {
+  transform: scale(0.96);
+  background-color: #EAE3D9;
 }
 
 .tile {

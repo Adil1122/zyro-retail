@@ -117,7 +117,7 @@ export function KhataWorkspace() {
         title="Khata"
         subtitle="Track customer credit balances, collect part payments, and send polite WhatsApp reminders."
         actions={
-          <Button variant="primary" onClick={() => setAddOpen(true)}>
+          <Button variant="dark" size="lg" onClick={() => setAddOpen(true)}>
             <Plus className="w-4 h-4" /> Add customer
           </Button>
         }

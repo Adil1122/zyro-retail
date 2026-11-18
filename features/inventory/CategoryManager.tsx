@@ -80,7 +80,7 @@ export function CategoryManager() {
                 <ArrowLeft className="w-4 h-4" /> Back to stock
               </Button>
             </Link>
-            <Button variant="primary" onClick={() => setAddOpen(true)}>
+            <Button variant="dark" size="lg" onClick={() => setAddOpen(true)}>
               <Plus className="w-4 h-4" /> Add category
             </Button>
           </div>

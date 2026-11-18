@@ -19,7 +19,7 @@ export interface TabsProps {
 export function Tabs({ tabs, activeId, onChange, variant = 'underline' }: TabsProps) {
   if (variant === 'pill') {
     return (
-      <div className="inline-flex flex-wrap items-center gap-1 p-1 rounded-[12px] bg-[#EAE3D9]">
+      <div className="inline-flex flex-wrap items-center gap-[2px] p-[3px] rounded-[12px] bg-[#EAE3D9]">
         {tabs.map((tab) => {
           const active = tab.id === activeId;
           return (
@@ -27,15 +27,15 @@ export function Tabs({ tabs, activeId, onChange, variant = 'underline' }: TabsPr
               key={tab.id}
               type="button"
               onClick={() => onChange(tab.id)}
-              className={`min-h-[36px] px-3.5 py-1.5 rounded-[9px] text-[13px] font-semibold transition-all flex items-center gap-1.5 ${
+              className={`h-[40px] px-[14px] rounded-[9px] text-[15px] font-semibold transition-all flex items-center gap-1.5 whitespace-nowrap ${
                 active
-                  ? 'bg-white text-[#0B2A2F] shadow-[0_1px_2px_rgba(15,31,25,.08)]'
+                  ? 'bg-white text-[#0B2A2F] shadow-[0_1px_2px_rgba(10,28,22,.08)]'
                   : 'text-[#3D5357] hover:text-[#0B2A2F]'
               }`}
             >
               <span>{tab.label}</span>
               {typeof tab.count === 'number' && (
-                <span className="px-1.5 py-0.2 rounded-full text-[11px] bg-[#F1EBE3] text-[#3D5357] num">
+                <span className="px-1.5 py-0.5 rounded-full text-[12px] bg-[#F1EBE3] text-[#3D5357] num">
                   {tab.count}
                 </span>
               )}

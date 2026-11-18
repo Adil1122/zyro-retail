@@ -14,7 +14,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { isPhone, isTablet } = useBreakpoint();
-  const { role, session, lang, t } = useZyro();
+  const { role, session, lang } = useZyro();
 
   useEffect(() => {
     if (!session.isAuthenticated) {
@@ -36,17 +36,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <AppHeader isPhone={isPhone} />
 
         {lang !== 'en' && (
-          <div className="px-4 py-1.5 bg-[#FCEFE4] border-b border-[#E2B48F] text-[12px] font-semibold text-[#8A3D12] flex items-center justify-between">
+          <div
+            role="note"
+            className="h-[34px] px-4 bg-[#EDF3FF] border-b border-[#D0E0FF] text-[13px] font-semibold text-[#1E40AF] flex items-center justify-center gap-2"
+          >
             <span>
               {lang === 'ur'
                 ? 'اردو زبان فعال ہے (دائیں سے بائیں ترتیب)'
-                : 'Roman Urdu labels active'}
+                : 'Menus, the register and first-run setup are translated · other pages stay English until the native-reader review'}
             </span>
-            <span className="text-[11px] opacity-80">{t('mainBranch')}</span>
           </div>
         )}
 
-        <main className={`flex-1 p-4 sm:p-6 ${isPhone ? 'pb-24' : ''} max-w-[1440px] w-full mx-auto`}>
+        <main
+          className={`flex-1 w-full px-4 py-4 md:px-5 md:py-[18px] lg:px-7 lg:py-[22px] lg:pb-8 ${
+            isPhone ? 'pb-24' : ''
+          }`}
+        >
           {allowed ? children : <NoAccessScreen pathname={pathname} />}
         </main>
       </div>

@@ -137,10 +137,10 @@ export function StaffWorkspace() {
         subtitle="Manage staff permissions, track salary advances, and run monthly payroll."
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => setAdvOpen(true)}>
+            <Button variant="secondary" size="lg" onClick={() => setAdvOpen(true)}>
               <Banknote className="w-4 h-4" /> Give advance
             </Button>
-            <Button variant="primary" onClick={() => setEmpOpen(true)}>
+            <Button variant="dark" size="lg" onClick={() => setEmpOpen(true)}>
               <UserPlus className="w-4 h-4" /> Add staff
             </Button>
           </div>

@@ -114,11 +114,11 @@ export function PurchasingWorkspace() {
         subtitle="Raise purchase orders, check deliveries on arrival, and track vendor bills."
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => setSupOpen(true)}>
+            <Button variant="secondary" size="lg" onClick={() => setSupOpen(true)}>
               <Building2 className="w-4 h-4" /> Add supplier
             </Button>
             <Link href="/purchasing/new-po">
-              <Button variant="primary">
+              <Button variant="dark" size="lg">
                 <Plus className="w-4 h-4" /> New purchase order
               </Button>
             </Link>

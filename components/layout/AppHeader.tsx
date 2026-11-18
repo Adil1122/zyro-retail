@@ -3,9 +3,11 @@
 import React, { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  Bell,
   Boxes,
   Check,
   ChevronDown,
+  Cloud,
   LogOut,
   MapPin,
   Receipt,
@@ -16,22 +18,30 @@ import {
   WifiOff,
   X,
 } from 'lucide-react';
-import { LanguageSwitcher } from '@/components/domain/LanguageSwitcher';
-import { Badge } from '@/components/ui/Badge';
 import { Dropdown } from '@/components/ui/Dropdown';
 import { ROLE_DISPLAY_NAMES } from '@/constants/navigation';
 import { useZyro } from '@/hooks/useZyro';
 import { formatPhone, formatRs } from '@/lib/format';
 import { calcBillTotal, getTotalStock } from '@/lib/inventory';
-import type { RoleId } from '@/types';
+import type { LanguageId, RoleId } from '@/types';
 
 export function AppHeader({ isPhone }: { isPhone: boolean }) {
   const router = useRouter();
-  const { state, role, user, settings, setBranch, setRole, signOut, notify, t } = useZyro();
+  const { state, role, user, settings, lang, setLanguage, setBranch, setRole, signOut, notify, t } =
+    useZyro();
   const [query, setQuery] = useState('');
 
   const activeBranch =
-    state.session.branches.find((b) => b.id === state.session.branchId) || state.session.branches[0];
+    state.session.branches.find((b) => b.id === state.session.branchId) ||
+    state.session.branches[0];
+
+  const pendingCount = useMemo(() => {
+    const cashDrafts = state.cashDrafts.filter((c) => c.status === 'draft').length;
+    const poDrafts = state.purchaseOrders.filter((p) => p.status === 'draft').length;
+    const vbDrafts = state.vendorBills.filter((b) => b.status === 'draft').length;
+    const expDrafts = state.expenseBills.filter((e) => e.status === 'draft').length;
+    return cashDrafts + poDrafts + vbDrafts + expDrafts;
+  }, [state.cashDrafts, state.expenseBills, state.purchaseOrders, state.vendorBills]);
 
   const q = query.trim().toLowerCase();
   const qDigits = q.replace(/\D/g, '');
@@ -63,14 +73,21 @@ export function AppHeader({ isPhone }: { isPhone: boolean }) {
 
   const switchRoleTo = (target: RoleId) => {
     setRole(target);
-    notify(`Switched active demo role to ${ROLE_DISPLAY_NAMES[target]}`, 'info');
+    notify(`Switched active view to ${ROLE_DISPLAY_NAMES[target]}`, 'info');
     router.push('/dashboard');
   };
 
-  return (
-    <header className="h-[56px] sm:h-[64px] shrink-0 bg-white border-b border-[#E7E0D7] px-3 sm:px-6 flex items-center justify-between gap-3 relative z-30">
-      {/* Left: Mobile brand + branch switcher or Desktop global omnibar */}
-      {isPhone ? (
+  if (isPhone) {
+    return (
+      <header className="h-[56px] shrink-0 bg-[#08343A] text-white px-2 ps-3 flex items-center gap-2 relative z-30">
+        <div
+          role="img"
+          aria-label="Zyro"
+          className="w-[34px] h-[34px] rounded-[10px] bg-[#E58A4E] text-[#08343A] font-display font-bold text-[17px] leading-none flex items-center justify-center shrink-0"
+        >
+          Z
+        </div>
+
         <Dropdown
           align="start"
           header={
@@ -82,22 +99,15 @@ export function AppHeader({ isPhone }: { isPhone: boolean }) {
           trigger={
             <button
               type="button"
-              className="flex items-center gap-2.5 min-w-0 text-start rounded-[10px] py-1 pe-1.5 hover:bg-[#F8F4EF] transition-colors"
+              className="flex-1 min-w-0 h-[44px] flex items-center gap-1 px-1 text-start text-white"
             >
-              <div className="w-8 h-8 rounded-[9px] bg-[#08343A] text-[#E58A4E] font-display font-bold text-[16px] flex items-center justify-center shrink-0">
-                Z
-              </div>
-              <div className="min-w-0">
-                <div className="font-display font-bold text-[14px] text-[#0B2A2F] truncate">
-                  {state.session.shopName}
-                </div>
-                <div className="text-[11px] text-[#52666A] truncate flex items-center gap-1">
-                  <span>{activeBranch.name}</span>
-                  <span>·</span>
-                  <span>{ROLE_DISPLAY_NAMES[role]}</span>
-                  <ChevronDown className="w-3 h-3 shrink-0" />
-                </div>
-              </div>
+              <span className="min-w-0 flex flex-col leading-[1.25]">
+                <span className="text-[15px] font-bold truncate">{state.session.shopName}</span>
+                <span className="text-[12px] text-[#A8C3C5] truncate">
+                  {activeBranch.name} · {settings.offlineModeSimulated ? 'offline' : 'synced'}
+                </span>
+              </span>
+              <ChevronDown className="w-3.5 h-3.5 text-[#A8C3C5] shrink-0" />
             </button>
           }
           items={state.session.branches.map((b) => ({
@@ -117,146 +127,24 @@ export function AppHeader({ isPhone }: { isPhone: boolean }) {
             },
           }))}
         />
-      ) : (
-        <div className="relative flex-1 max-w-[440px]">
-          <div className="field flex items-center gap-2 h-[40px] px-3 rounded-[10px] border border-[#D6CDC1] bg-[#FBF8F4]">
-            <Search className="w-4 h-4 text-[#52666A] shrink-0" />
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={t('search')}
-              className="w-full bg-transparent text-[14px] text-[#0B2A2F] placeholder:text-[#52666A] focus:outline-none"
-            />
-            {query && (
-              <button
-                type="button"
-                onClick={() => setQuery('')}
-                className="p-0.5 rounded text-[#52666A] hover:bg-[#EAE3D9]"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
+
+        <div className="flex-1" />
+
+        {role === 'owner' && (
+          <button
+            type="button"
+            onClick={() => router.push('/dashboard')}
+            aria-label={`${pendingCount} waiting for review`}
+            className="w-[44px] h-[44px] rounded-full bg-white/8 flex items-center justify-center relative shrink-0"
+          >
+            <Bell className="w-5 h-5 text-white" />
+            {pendingCount > 0 && (
+              <span className="num absolute top-0 end-0 min-w-[18px] h-[18px] px-1 rounded-full bg-[#E58A4E] text-[#08343A] text-[12px] font-bold flex items-center justify-center">
+                {pendingCount}
+              </span>
             )}
-          </div>
-
-          {searchResults && !Array.isArray(searchResults) && (
-            <div className="anim-up absolute top-full mt-2 inset-x-0 z-50 rounded-[14px] bg-white border border-[#E7E0D7] shadow-[0_18px_48px_rgba(10,28,22,.18)] p-2 space-y-2 max-h-[380px] overflow-y-auto">
-              {searchResults.items.length > 0 && (
-                <div>
-                  <div className="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-[#52666A]">
-                    Items
-                  </div>
-                  {searchResults.items.map((it) => (
-                    <button
-                      key={it.id}
-                      type="button"
-                      onClick={() => {
-                        setQuery('');
-                        router.push(`/inventory?item=${it.id}`);
-                      }}
-                      className="w-full px-2.5 py-2 rounded-[9px] hover:bg-[#F8F4EF] flex items-center justify-between gap-2 text-start"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <Boxes className="w-4 h-4 text-[#08343A] shrink-0" />
-                        <div className="min-w-0">
-                          <div className="text-[13px] font-semibold text-[#0B2A2F] truncate">{it.name}</div>
-                          <div className="text-[11px] text-[#52666A] mono">
-                            {it.sku} · {getTotalStock(it)} in stock
-                          </div>
-                        </div>
-                      </div>
-                      <span className="text-[13px] font-bold text-[#08343A] num">{formatRs(it.price)}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {searchResults.customers.length > 0 && (
-                <div>
-                  <div className="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-[#52666A]">
-                    Customers
-                  </div>
-                  {searchResults.customers.map((c) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => {
-                        setQuery('');
-                        router.push(`/khata?cust=${c.id}`);
-                      }}
-                      className="w-full px-2.5 py-2 rounded-[9px] hover:bg-[#F8F4EF] flex items-center justify-between gap-2 text-start"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <User className="w-4 h-4 text-[#08343A] shrink-0" />
-                        <div className="min-w-0">
-                          <div className="text-[13px] font-semibold text-[#0B2A2F] truncate">{c.name}</div>
-                          <div className="text-[11px] text-[#52666A] mono">
-                            {role === 'owner' ? formatPhone(c.phone) : 'Customer'}
-                          </div>
-                        </div>
-                      </div>
-                      {c.khata > 0 && (
-                        <span className="text-[12px] font-semibold text-[#8A3D12] num">
-                          Owes {formatRs(c.khata)}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {searchResults.bills.length > 0 && (
-                <div>
-                  <div className="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-[#52666A]">
-                    Bills
-                  </div>
-                  {searchResults.bills.map((b) => (
-                    <button
-                      key={b.no}
-                      type="button"
-                      onClick={() => {
-                        setQuery('');
-                        router.push(`/pos/bills?bill=${b.no}`);
-                      }}
-                      className="w-full px-2.5 py-2 rounded-[9px] hover:bg-[#F8F4EF] flex items-center justify-between gap-2 text-start"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <Receipt className="w-4 h-4 text-[#08343A] shrink-0" />
-                        <div className="min-w-0">
-                          <div className="text-[13px] font-semibold text-[#0B2A2F] mono">Bill {b.no}</div>
-                          <div className="text-[11px] text-[#52666A]">{b.time}</div>
-                        </div>
-                      </div>
-                      <span className="text-[13px] font-bold num">
-                        {formatRs(calcBillTotal(b, state.items))}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {Array.isArray(searchResults) && (
-            <div className="anim-up absolute top-full mt-2 inset-x-0 z-50 rounded-[14px] bg-white border border-[#E7E0D7] shadow-lg p-4 text-center text-[13px] text-[#52666A]">
-              No matching items, customers, or bills.
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Right controls */}
-      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-        {settings.offlineModeSimulated && (
-          <Badge tone="warn" withIcon>
-            <WifiOff className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">Offline</span>
-          </Badge>
+          </button>
         )}
-
-        <div className="hidden sm:block">
-          <LanguageSwitcher compact={isPhone} />
-        </div>
 
         <Dropdown
           align="end"
@@ -264,21 +152,39 @@ export function AppHeader({ isPhone }: { isPhone: boolean }) {
             <div>
               <div className="font-semibold text-[14px] text-[#0B2A2F]">{user.name}</div>
               <div className="text-[12px] text-[#52666A]">{ROLE_DISPLAY_NAMES[role]}</div>
+              <div className="mt-2 grid grid-cols-3 gap-1 p-0.5 rounded-[8px] bg-[#EAE3D9]">
+                {(
+                  [
+                    { id: 'en', label: 'EN' },
+                    { id: 'roman', label: 'Roman' },
+                    { id: 'ur', label: 'اردو' },
+                  ] as { id: LanguageId; label: string }[]
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setLanguage(opt.id)}
+                    className={`h-[26px] rounded-[6px] text-[11px] font-semibold ${
+                      lang === opt.id ? 'bg-white text-[#0B2A2F]' : 'text-[#3D5357]'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
             </div>
           }
           trigger={
             <button
               type="button"
-              className="flex items-center gap-2 p-1 pe-2 rounded-full border border-[#E7E0D7] bg-[#FBF8F4] hover:bg-[#F1EBE3] transition-colors"
+              aria-label={`Staff menu · ${user.name}`}
+              className="w-[44px] h-[44px] rounded-full flex items-center justify-center shrink-0"
             >
               <span
                 style={{ backgroundColor: user.avatarBg, color: user.avatarFg }}
-                className="w-8 h-8 rounded-full font-bold text-[12px] flex items-center justify-center"
+                className="w-[34px] h-[34px] rounded-full text-[13px] font-bold flex items-center justify-center"
               >
                 {user.initials}
-              </span>
-              <span className="hidden md:inline text-[13px] font-semibold text-[#0B2A2F]">
-                {user.shortName}
               </span>
             </button>
           }
@@ -286,7 +192,7 @@ export function AppHeader({ isPhone }: { isPhone: boolean }) {
             {
               id: 'role-owner',
               label: 'View as Owner',
-              sub: 'Full access · Hamza Sheikh',
+              sub: 'Hamza Sheikh',
               icon: role === 'owner' ? <Check className="w-4 h-4 text-[#C9682E]" /> : <ShieldCheck className="w-4 h-4" />,
               active: role === 'owner',
               onSelect: () => switchRoleTo('owner'),
@@ -294,7 +200,7 @@ export function AppHeader({ isPhone }: { isPhone: boolean }) {
             {
               id: 'role-cashier',
               label: 'View as Cashier',
-              sub: 'Register, Bills, Khata · Ali Hassan',
+              sub: 'Ali Hassan',
               icon: role === 'cashier' ? <Check className="w-4 h-4 text-[#C9682E]" /> : <User className="w-4 h-4" />,
               active: role === 'cashier',
               onSelect: () => switchRoleTo('cashier'),
@@ -302,7 +208,7 @@ export function AppHeader({ isPhone }: { isPhone: boolean }) {
             {
               id: 'role-inventory',
               label: 'View as Stockkeeper',
-              sub: 'Stock, Receive, Orders · Faraz Ahmed',
+              sub: 'Faraz Ahmed',
               icon: role === 'inventory' ? <Check className="w-4 h-4 text-[#C9682E]" /> : <Boxes className="w-4 h-4" />,
               active: role === 'inventory',
               onSelect: () => switchRoleTo('inventory'),
@@ -325,7 +231,173 @@ export function AppHeader({ isPhone }: { isPhone: boolean }) {
             },
           ]}
         />
+      </header>
+    );
+  }
+
+  return (
+    <header className="h-[56px] lg:h-[64px] shrink-0 bg-[#F8F4EF] border-b border-[#E7E0D7] px-5 lg:px-7 flex items-center gap-3 relative z-30">
+      {/* Omnibar search matching App.html */}
+      <div className="relative flex-1 max-w-[460px] min-w-0">
+        <div className="field flex items-center gap-2 h-[44px] px-3 rounded-[12px] border border-[#D6CDC1] bg-white">
+          <Search className="w-[18px] h-[18px] text-[#52666A] shrink-0" />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t('search')}
+            className="w-full bg-transparent text-[16px] text-[#0B2A2F] placeholder:text-[#52666A] focus:outline-none"
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => setQuery('')}
+              aria-label="Clear search"
+              className="w-8 h-8 -me-1.5 rounded-full bg-[#F1EBE3] text-[#3D5357] flex items-center justify-center shrink-0"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        {searchResults && !Array.isArray(searchResults) && (
+          <div className="anim-up absolute top-full mt-2 inset-x-0 z-50 rounded-[16px] bg-white border border-[#E7E0D7] shadow-[0_18px_48px_rgba(10,28,22,.22)] p-2 space-y-2 max-h-[380px] overflow-y-auto">
+            {searchResults.items.length > 0 && (
+              <div>
+                <div className="px-2.5 py-1.5 text-[13px] font-semibold text-[#52666A]">Items</div>
+                {searchResults.items.map((it) => (
+                  <button
+                    key={it.id}
+                    type="button"
+                    onClick={() => {
+                      setQuery('');
+                      router.push(`/inventory?item=${it.id}`);
+                    }}
+                    className="row w-full px-2.5 py-2 rounded-[12px] flex items-center justify-between gap-2 text-start"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="w-9 h-9 rounded-full bg-[#F1EBE3] text-[#08343A] flex items-center justify-center shrink-0">
+                        <Boxes className="w-4 h-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-[14px] font-semibold text-[#0B2A2F] truncate">{it.name}</div>
+                        <div className="text-[12px] text-[#52666A] mono">
+                          {it.sku} · {getTotalStock(it)} in stock
+                        </div>
+                      </div>
+                    </div>
+                    <span className="text-[14px] font-bold text-[#08343A] num">{formatRs(it.price)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {searchResults.customers.length > 0 && (
+              <div>
+                <div className="px-2.5 py-1.5 text-[13px] font-semibold text-[#52666A]">Customers</div>
+                {searchResults.customers.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => {
+                      setQuery('');
+                      router.push(`/khata?cust=${c.id}`);
+                    }}
+                    className="row w-full px-2.5 py-2 rounded-[12px] flex items-center justify-between gap-2 text-start"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="w-9 h-9 rounded-full bg-[#F1EBE3] text-[#08343A] flex items-center justify-center shrink-0">
+                        <User className="w-4 h-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-[14px] font-semibold text-[#0B2A2F] truncate">{c.name}</div>
+                        <div className="text-[12px] text-[#52666A] mono">
+                          {role === 'owner' ? formatPhone(c.phone) : 'Customer'}
+                        </div>
+                      </div>
+                    </div>
+                    {c.khata > 0 && (
+                      <span className="text-[13px] font-semibold text-[#8A3D12] num">
+                        Owes {formatRs(c.khata)}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {searchResults.bills.length > 0 && (
+              <div>
+                <div className="px-2.5 py-1.5 text-[13px] font-semibold text-[#52666A]">Bills</div>
+                {searchResults.bills.map((b) => (
+                  <button
+                    key={b.no}
+                    type="button"
+                    onClick={() => {
+                      setQuery('');
+                      router.push(`/pos/bills?bill=${b.no}`);
+                    }}
+                    className="row w-full px-2.5 py-2 rounded-[12px] flex items-center justify-between gap-2 text-start"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="w-9 h-9 rounded-full bg-[#F1EBE3] text-[#08343A] flex items-center justify-center shrink-0">
+                        <Receipt className="w-4 h-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-[14px] font-semibold text-[#0B2A2F] mono">Bill {b.no}</div>
+                        <div className="text-[12px] text-[#52666A]">{b.time}</div>
+                      </div>
+                    </div>
+                    <span className="text-[14px] font-bold num">{formatRs(calcBillTotal(b, state.items))}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {Array.isArray(searchResults) && (
+          <div className="anim-up absolute top-full mt-2 inset-x-0 z-50 rounded-[16px] bg-white border border-[#E7E0D7] shadow-[0_18px_48px_rgba(10,28,22,.22)] p-4 text-center text-[13px] text-[#52666A]">
+            No matching items, customers, or bills.
+          </div>
+        )}
       </div>
+
+      <div className="flex-1" />
+
+      {/* Sync status pill matching App.html */}
+      {settings.offlineModeSimulated ? (
+        <span className="h-[32px] px-[10px] rounded-full bg-[#FFF3C4] text-[#6B4E00] text-[13px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap">
+          <WifiOff className="w-4 h-4" />
+          Offline
+        </span>
+      ) : (
+        <span
+          role="status"
+          aria-label="All sales synced"
+          className="h-[32px] px-[10px] rounded-full bg-[#E8F6EE] text-[#14532D] text-[13px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap"
+        >
+          <Cloud className="w-4 h-4" />
+          Synced
+        </span>
+      )}
+
+      {/* Owner notification bell matching App.html */}
+      {role === 'owner' && (
+        <button
+          type="button"
+          onClick={() => router.push('/dashboard')}
+          aria-label={`${pendingCount} items waiting for review`}
+          className="w-[44px] h-[44px] rounded-full bg-white shadow-[inset_0_0_0_1px_#E7E0D7] flex items-center justify-center relative shrink-0 hover:bg-[#FBF8F4]"
+        >
+          <Bell className="w-5 h-5 text-[#08343A]" />
+          {pendingCount > 0 && (
+            <span className="num absolute -top-0.5 -end-0.5 min-w-[20px] h-[20px] px-[5px] rounded-full bg-[#E58A4E] text-[#08343A] text-[12px] font-bold flex items-center justify-center shadow-[0_0_0_2px_#F8F4EF]">
+              {pendingCount}
+            </span>
+          )}
+        </button>
+      )}
     </header>
   );
 }

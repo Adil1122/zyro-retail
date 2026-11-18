@@ -135,18 +135,18 @@ export function CashWorkspace() {
         subtitle="Track opening floats, shift handovers, and manual cash movements in or out."
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => setEntryOpen(true)}>
+            <Button variant="secondary" size="lg" onClick={() => setEntryOpen(true)}>
               <Plus className="w-4 h-4" /> New cash entry
             </Button>
             {openShift ? (
               <Link href="/cash/close-shift">
-                <Button variant="primary">
+                <Button variant="dark" size="lg">
                   <Lock className="w-4 h-4" /> Close active shift
                 </Button>
               </Link>
             ) : (
               <Link href="/cash/open-shift">
-                <Button variant="primary">
+                <Button variant="dark" size="lg">
                   <Unlock className="w-4 h-4" /> Open shift
                 </Button>
               </Link>

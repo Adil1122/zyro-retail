@@ -180,7 +180,7 @@ export function OrdersWorkspace() {
         subtitle="Confirm online orders, pack items off shelf, and reconcile courier cash-on-delivery."
         actions={
           role !== 'inventory' ? (
-            <Button variant="primary" onClick={() => setCreateOpen(true)}>
+            <Button variant="dark" size="lg" onClick={() => setCreateOpen(true)}>
               <Plus className="w-4 h-4" /> Create order
             </Button>
           ) : undefined

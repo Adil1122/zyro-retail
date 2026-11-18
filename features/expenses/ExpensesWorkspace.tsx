@@ -90,7 +90,7 @@ export function ExpensesWorkspace() {
         title="Expenses"
         subtitle="Record electricity, rent, packaging, and repairs, and schedule monthly bills."
         actions={
-          <Button variant="primary" onClick={() => setAddOpen(true)}>
+          <Button variant="dark" size="lg" onClick={() => setAddOpen(true)}>
             <Plus className="w-4 h-4" /> Add expense bill
           </Button>
         }

@@ -31,7 +31,7 @@ export function Card({
   return (
     <div
       onClick={onClick}
-      className={`rounded-[14px] border shadow-[0_1px_2px_rgba(15,31,25,.05)] ${toneCls} ${padCls} ${
+      className={`rounded-[18px] border ${toneCls} ${padCls} ${
         onClick ? 'cursor-pointer tile' : ''
       } ${className}`}
     >

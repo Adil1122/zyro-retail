@@ -33,7 +33,7 @@ export function Badge({ tone = 'neutral', withIcon = false, children, className 
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[12px] font-semibold border whitespace-nowrap ${styles[tone]} ${className}`}
+      className={`inline-flex items-center gap-1.5 h-[24px] px-[9px] rounded-full text-[13px] font-semibold border whitespace-nowrap ${styles[tone]} ${className}`}
     >
       {withIcon && <Icon className="w-3.5 h-3.5 shrink-0" />}
       {children}

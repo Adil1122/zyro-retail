@@ -30,7 +30,7 @@ export function MobileNavigation() {
 
   return (
     <>
-      <nav className="fixed bottom-0 inset-x-0 z-40 h-[64px] bg-white border-t border-[#E7E0D7] flex items-center justify-around px-1 shadow-[0_-4px_16px_rgba(10,28,22,.06)]">
+      <nav className="fixed bottom-0 inset-x-0 z-40 h-[64px] bg-white border-t border-[#E7E0D7] flex items-center">
         {tabs.map((n) => {
           const on = isActive(n);
           const label = t(n.id === 'bills' ? 'billsShort' : n.id);
@@ -38,18 +38,18 @@ export function MobileNavigation() {
             <Link
               key={n.id}
               href={n.href}
-              className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-1.5 rounded-[10px] ${
-                on ? 'text-[#08343A] font-semibold' : 'text-[#52666A] font-medium'
+              className={`tab flex-1 h-full flex flex-col items-center justify-center gap-[2px] text-[12px] ${
+                on ? 'text-[#08343A] font-bold' : 'text-[#52666A] font-medium'
               }`}
             >
               <span
-                className={`px-3 py-1 rounded-full flex items-center justify-center ${
+                className={`w-[32px] h-[32px] rounded-full flex items-center justify-center ${
                   on ? 'bg-[#E58A4E] text-[#08343A]' : ''
                 }`}
               >
-                <NavIcon icon={n.icon} className="w-4 h-4" />
+                <NavIcon icon={n.icon} className="w-[18px] h-[18px]" />
               </span>
-              <span className="text-[11px] truncate max-w-[70px]">{label}</span>
+              <span className="truncate max-w-[70px]">{label}</span>
             </Link>
           );
         })}
@@ -58,18 +58,18 @@ export function MobileNavigation() {
           <button
             type="button"
             onClick={() => setMoreOpen(true)}
-            className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-1.5 rounded-[10px] ${
-              restActive ? 'text-[#08343A] font-semibold' : 'text-[#52666A] font-medium'
+            className={`tab flex-1 h-full flex flex-col items-center justify-center gap-[2px] text-[12px] ${
+              restActive ? 'text-[#08343A] font-bold' : 'text-[#52666A] font-medium'
             }`}
           >
             <span
-              className={`px-3 py-1 rounded-full flex items-center justify-center ${
+              className={`w-[32px] h-[32px] rounded-full flex items-center justify-center ${
                 restActive ? 'bg-[#E58A4E] text-[#08343A]' : ''
               }`}
             >
-              <LayoutGrid className="w-4 h-4" />
+              <LayoutGrid className="w-[18px] h-[18px]" />
             </span>
-            <span className="text-[11px]">{t('more')}</span>
+            <span>{t('more')}</span>
           </button>
         )}
       </nav>

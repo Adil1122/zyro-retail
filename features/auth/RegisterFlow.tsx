@@ -1,358 +1,946 @@
 'use client';
 
-import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, Store } from 'lucide-react';
-import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
-import { Input } from '@/components/ui/Input';
-import { KITS } from '@/constants/kits';
+import { useRouter } from 'next/navigation';
+import {
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  ChevronRight,
+  Clock,
+  Footprints,
+  Gem,
+  Layers,
+  Phone,
+  Pill,
+  RefreshCw,
+  Shirt,
+  ShoppingBasket,
+  Smartphone,
+  Sparkles,
+  Trash2,
+  Upload,
+} from 'lucide-react';
+import { categoriesForKit, kitById } from '@/constants/kits';
 import { useZyro } from '@/hooks/useZyro';
-import { formatPhoneIntl, isValidPkPhone } from '@/lib/format';
 import type { ShopKitId } from '@/types';
+import { AuthFlowShell } from './AuthFlowShell';
 
 type RegStep = 'phone' | 'code' | 'you' | 'shop' | 'kind' | 'building' | 'ready';
+
+const STEP_LIST: Array<{ id: Exclude<RegStep, 'building'>; label: string }> = [
+  { id: 'phone', label: 'Your number' },
+  { id: 'code', label: 'SMS code' },
+  { id: 'you', label: 'About you' },
+  { id: 'shop', label: 'Your shop' },
+  { id: 'kind', label: 'What you sell' },
+  { id: 'ready', label: 'Ready' },
+];
+
+const KIT_ORDER: ShopKitId[] = [
+  'clothing',
+  'shoes',
+  'jewellery',
+  'pharmacy',
+  'grocery',
+  'cosmetics',
+  'mobile',
+  'other',
+];
+
+const KIT_META: Record<
+  ShopKitId,
+  {
+    name: string;
+    sub: string;
+    asks: string;
+    counts: string;
+    barcodes: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }
+> = {
+  clothing: {
+    name: 'Clothing and fashion',
+    sub: 'Suits, kurtas, lawn, kids wear',
+    asks: 'colours, sizes and how many of each',
+    counts: 'Pieces',
+    barcodes: 'Zyro prints a label for each one',
+    icon: Shirt,
+  },
+  shoes: {
+    name: 'Footwear',
+    sub: 'Shoes, chappals, khussas, sandals',
+    asks: 'colours, sizes and how many of each',
+    counts: 'Pairs',
+    barcodes: 'Zyro prints a label for each one',
+    icon: Footprints,
+  },
+  jewellery: {
+    name: 'Jewellery',
+    sub: 'Gold, silver, artificial',
+    asks: 'karat, weight and making charge of each piece',
+    counts: 'Pieces',
+    barcodes: 'Zyro prints a label for each one',
+    icon: Gem,
+  },
+  pharmacy: {
+    name: 'Pharmacy',
+    sub: 'Medicines and personal care',
+    asks: 'batch, expiry and packs in each batch',
+    counts: 'Packs and strips',
+    barcodes: 'Scan the barcode already on the pack',
+    icon: Pill,
+  },
+  grocery: {
+    name: 'Grocery and general store',
+    sub: 'Kiryana, mart, daily items',
+    asks: 'pack size, or price per kg or litre',
+    counts: 'Packs and strips',
+    barcodes: 'Scan the barcode already on the pack',
+    icon: ShoppingBasket,
+  },
+  cosmetics: {
+    name: 'Cosmetics and beauty',
+    sub: 'Makeup, skin and hair care',
+    asks: 'shade names and how many of each',
+    counts: 'Pieces',
+    barcodes: 'Scan the barcode already on the pack',
+    icon: Sparkles,
+  },
+  mobile: {
+    name: 'Mobiles and electronics',
+    sub: 'Phones, chargers, accessories',
+    asks: 'the IMEI or serial of every unit',
+    counts: 'Pieces',
+    barcodes: 'Scan the IMEI or serial',
+    icon: Smartphone,
+  },
+  other: {
+    name: 'Something else',
+    sub: 'Start empty and add your own',
+    asks: 'only how many you have',
+    counts: 'Pieces',
+    barcodes: 'Zyro prints a label for each one',
+    icon: Layers,
+  },
+};
+
+const CITIES = [
+  'Lahore',
+  'Karachi',
+  'Islamabad',
+  'Rawalpindi',
+  'Faisalabad',
+  'Multan',
+  'Peshawar',
+  'Sialkot',
+  'Gujranwala',
+  'Other',
+];
+
+const WRONG_CODE = '481923';
 
 export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep }) {
   const router = useRouter();
   const { completeAuthSignIn, updateOwnerPassword, updateSettings, setKit, notify } = useZyro();
 
   const [step, setStep] = useState<RegStep>(initialStep);
-  const [phone, setPhone] = useState('03001112233');
-  const [termsAccepted, setTermsAccepted] = useState(true);
-  const [otp, setOtp] = useState('482910');
-  const [fullName, setFullName] = useState('Hamza Sheikh');
-  const [password, setPassword] = useState('ZyroShop@2026');
-  const [shopName, setShopName] = useState('Hamza Fashion');
+  const [phone, setPhone] = useState('321 4567890');
+  const [agree, setAgree] = useState(true);
+  const [taken, setTaken] = useState(false);
+
+  const [code, setCode] = useState('482913');
+  const [codeBad, setCodeBad] = useState(false);
+
+  const [name, setName] = useState('Hamza Sheikh');
+  const [email, setEmail] = useState('hamza@yourshop.pk');
+  const [pw, setPw] = useState('Stride2026');
+  const [pwShown, setPwShown] = useState(false);
+
+  const [shop, setShop] = useState('Stride Footwear');
   const [city, setCity] = useState('Lahore');
-  const [selectedKit, setSelectedKit] = useState<ShopKitId>('clothing');
-  const [error, setError] = useState('');
+  const [cityName, setCityName] = useState('');
+  const [area, setArea] = useState('Liberty Market, Gulberg');
+  const [branches, setBranches] = useState<1 | 2 | 4>(1);
+  const [hasLogo, setHasLogo] = useState(false);
 
-  const stepIndex = ['phone', 'code', 'you', 'shop', 'kind', 'building', 'ready'].indexOf(step);
+  const [selectedKit, setSelectedKit] = useState<ShopKitId>('shoes');
+  const [builtCount, setBuiltCount] = useState(0);
 
-  const nextFromPhone = () => {
-    if (!isValidPkPhone(phone)) {
-      setError('Enter an 11-digit Pakistani mobile number starting with 03.');
-      return;
-    }
-    if (!termsAccepted) {
-      setError('Please agree to the shop account terms to continue.');
-      return;
-    }
-    setError('');
-    setStep('code');
-  };
+  const digits10 = phone.replace(/\D/g, '').slice(0, 10);
+  const phoneOk = /^3\d{9}$/.test(digits10);
+  const phoneFormatted =
+    digits10.length >= 3 ? `+92 ${digits10.slice(0, 3)} ${digits10.slice(3)}` : '+92 321 4567890';
 
-  const nextFromCode = () => {
-    if (otp.replace(/\D/g, '').length !== 6) {
-      setError('Enter the 6-digit SMS code (demo code: 482910).');
-      return;
-    }
-    setError('');
-    setStep('you');
-  };
+  const codeOk = /^\d{6}$/.test(code);
 
-  const nextFromYou = () => {
-    if (!fullName.trim() || password.length < 8) {
-      setError('Enter your name and a password of at least 8 characters.');
-      return;
-    }
-    setError('');
-    setStep('shop');
-  };
+  const r1 = pw.length >= 8;
+  const r2 = /\d/.test(pw);
+  const r3 = !digits10 || !pw.replace(/\D/g, '').includes(digits10);
+  const pwOk = r1 && r2 && r3;
 
-  const nextFromShop = () => {
-    if (!shopName.trim()) {
-      setError('Enter your shop name.');
-      return;
-    }
-    setError('');
-    setStep('kind');
-  };
+  const cityShown = city === 'Other' ? cityName.trim() || '—' : city;
+  const shopName = shop.trim() || 'Stride Footwear';
+  const shopInitial = (shopName[0] || 'S').toUpperCase();
+  const kitMeta = KIT_META[selectedKit];
+  const kitCats = categoriesForKit(selectedKit).map((c) => c.label);
 
-  const startBuildShop = () => {
+  useEffect(() => {
+    if (step !== 'building') return;
+    setBuiltCount(0);
+    const timers: Array<ReturnType<typeof setTimeout>> = [];
+    [1, 2, 3, 4, 5].forEach((k) => {
+      timers.push(setTimeout(() => setBuiltCount(k), k * 340));
+    });
+    timers.push(setTimeout(() => setStep('ready'), 5 * 340 + 420));
+    return () => timers.forEach(clearTimeout);
+  }, [step]);
+
+  const curIdx = STEP_LIST.findIndex((s) => s.id === (step === 'building' ? 'ready' : step));
+  const steps = STEP_LIST.map((s, i) => {
+    const done = i < curIdx || (step === 'ready' && i === curIdx);
+    const active = i === curIdx && !done;
+    return { id: s.id, label: s.label, done, active, number: i + 1 };
+  });
+
+  const commitAccount = (targetRoute: string) => {
+    const cleanShop = shopName;
+    const cfg = kitById(selectedKit);
     setKit(selectedKit);
-    setStep('building');
-    setTimeout(() => {
-      setStep('ready');
-    }, 850);
-  };
-
-  const finishSetup = () => {
-    const cleanShop = shopName.trim() || 'My Shop';
-    updateOwnerPassword(password);
-    completeAuthSignIn('owner', cleanShop, selectedKit, fullName.trim() || 'Owner');
+    updateOwnerPassword(pw);
+    completeAuthSignIn('owner', cleanShop || cfg.defaultShopName, selectedKit, name.trim() || 'Hamza Sheikh');
     updateSettings({
-      phone: phone.replace(/\D/g, ''),
-      city: city.trim() || 'Lahore',
+      shopName: cleanShop,
+      phone: `0${digits10}`,
+      city: cityShown === '—' ? 'Lahore' : cityShown,
+      address: area.trim() || 'Liberty Market, Gulberg',
     });
     notify(`${cleanShop} is ready`, 'ok');
-    router.push('/dashboard');
+    router.push(targetRoute);
   };
 
-  const kitConfig = KITS.find((k) => k.id === selectedKit) || KITS[0];
+  let why = '';
+  let nextLabel = 'Next';
+  let onNext: (() => void) | undefined = undefined;
+  let backHref: string | undefined = undefined;
+  let onBack: (() => void) | undefined = undefined;
+
+  if (step === 'phone') {
+    why = !phoneOk ? 'Type a 10-digit number starting with 3' : !agree ? 'Tick that you agree to the terms' : '';
+    nextLabel = 'Send code';
+    backHref = '/welcome';
+    onNext = () => {
+      if (why) return;
+      if (digits10 === '3001234567') {
+        setTaken(true);
+        return;
+      }
+      setCode('');
+      setCodeBad(false);
+      setStep('code');
+    };
+  } else if (step === 'code') {
+    why = !codeOk ? 'Type all 6 digits' : '';
+    nextLabel = 'Check code';
+    onBack = () => setStep('phone');
+    onNext = () => {
+      if (!codeOk) return;
+      if (code === WRONG_CODE) {
+        setCodeBad(true);
+        return;
+      }
+      setStep('you');
+    };
+  } else if (step === 'you') {
+    why = !name.trim() ? 'Type your name' : !pwOk ? 'Pick a password that meets all three' : '';
+    onBack = () => setStep('code');
+    onNext = () => {
+      if (!why) setStep('shop');
+    };
+  } else if (step === 'shop') {
+    why = !shop.trim() ? 'Type the shop name' : city === 'Other' && !cityName.trim() ? 'Type the city name' : '';
+    onBack = () => setStep('you');
+    onNext = () => {
+      if (!why) setStep('kind');
+    };
+  } else if (step === 'kind') {
+    nextLabel = 'Create my shop';
+    onBack = () => setStep('shop');
+    onNext = () => setStep('building');
+  } else if (step === 'ready') {
+    nextLabel = 'Set up this counter';
+    onNext = () => commitAccount('/setup');
+  }
+
+  const TITLES: Record<RegStep, { t: string; s: string }> = {
+    phone: {
+      t: 'What’s your mobile number?',
+      s: 'You’ll sign in with it. We send a 6-digit code to check it’s yours.',
+    },
+    code: {
+      t: 'Type the code we sent',
+      s: 'It came by SMS. It works for 10 minutes.',
+    },
+    you: {
+      t: 'About you',
+      s: 'You’ll be the owner. Staff get their own sign-in later.',
+    },
+    shop: {
+      t: 'Your shop',
+      s: 'This goes on your receipts. Change it any time in Settings.',
+    },
+    kind: {
+      t: 'What do you sell?',
+      s: 'Zyro sets up categories, sizes and labels to match. You can add your own later.',
+    },
+    building: {
+      t: `Setting up ${shopName}`,
+      s: 'This takes a few seconds.',
+    },
+    ready: {
+      t: `${shopName} is ready`,
+      s: 'You’re signed in as the owner. Do these next, in any order.',
+    },
+  };
+
+  const buildRows = [
+    `Owner account for ${name.trim() || 'Hamza Sheikh'}`,
+    `Main branch in ${cityShown}`,
+    `Categories: ${kitCats.join(', ') || 'General'}`,
+    'Labels and receipt with your shop name',
+    'Your Home and today’s page',
+  ];
+
+  const nextCards = [
+    {
+      n: 1,
+      t: 'Set up this counter',
+      s: 'Pick the printer and print a test receipt. About 3 minutes.',
+      href: '/setup',
+      hi: true,
+    },
+    {
+      n: 2,
+      t: 'Add your first items',
+      s: 'Add item asks only what your kind of shop needs, then makes labels.',
+      href: '/inventory/items/new',
+      hi: false,
+    },
+    {
+      n: 3,
+      t: 'Add your staff',
+      s: 'Each person gets an SMS to join and only sees their job.',
+      href: '/settings',
+      hi: false,
+    },
+    {
+      n: 4,
+      t: 'Get the phone app',
+      s: 'Sign in with the same number to scan and take item photos.',
+      href: '/inventory/photos',
+      hi: false,
+    },
+  ];
 
   return (
-    <div className="w-full max-w-[920px] grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-      <Card padding="lg" className="lg:col-span-7 space-y-5">
-        <div className="flex items-center justify-between">
-          <Badge tone="copper">Step {Math.min(stepIndex + 1, 6)} of 6</Badge>
-          <Link href="/sign-in" className="text-[13px] font-semibold text-[#0E5E66] hover:underline">
-            Already have an account?
-          </Link>
-        </div>
-
-        {step === 'phone' && (
-          <div className="space-y-4">
-            <div>
-              <h1 className="font-display text-[24px] font-bold text-[#0B2A2F]">Create your shop account</h1>
-              <p className="text-[14px] text-[#52666A] mt-1">
-                We’ll verify your mobile number first. This becomes your owner login.
-              </p>
+    <AuthFlowShell
+      railTitle="Create your shop"
+      railSub="About 5 minutes"
+      steps={steps}
+      stepOf={`Step ${Math.max(1, curIdx + 1)} of ${STEP_LIST.length}`}
+      stepNo={Math.max(1, curIdx + 1)}
+      stepMax={STEP_LIST.length}
+      railAltLabel={step !== 'building' && step !== 'ready' ? 'Already have an account? Sign in' : undefined}
+      railAltHref="/sign-in"
+      helpText="Stuck? Message Zyro support and we’ll set it up with you."
+      title={TITLES[step].t}
+      subtitle={TITLES[step].s}
+      maxWidth={step === 'kind' || step === 'shop' ? 900 : 640}
+      hasFooter={step !== 'building'}
+      hasBack={step !== 'building' && step !== 'ready'}
+      backHref={backHref}
+      onBack={onBack}
+      why={why}
+      nextLabel={nextLabel}
+      onNext={onNext}
+      nextDisabled={!!why}
+      secondaryLabel={step === 'ready' ? 'Go to Home' : undefined}
+      onSecondary={step === 'ready' ? () => commitAccount('/dashboard') : undefined}
+      cornerBadge={
+        step === 'ready' ? (
+          <span
+            aria-hidden="true"
+            className="hidden lg:flex absolute top-7 end-8 w-16 h-16 rounded-full bg-[#E8F6EE] text-[#2F9E63] items-center justify-center anim-up"
+          >
+            <Check className="w-[34px] h-[34px] stroke-[2.5]" />
+          </span>
+        ) : null
+      }
+    >
+      {/* STEP 1: PHONE */}
+      {step === 'phone' && (
+        <>
+          <div className="flex flex-col gap-1.5 max-w-[440px]">
+            <label htmlFor="ca-ph" className="text-[14px] font-semibold text-[#3D5357]">
+              Mobile number
+            </label>
+            <div
+              dir="ltr"
+              className={`field flex items-stretch h-[56px] rounded-[12px] bg-white overflow-hidden ${
+                taken ? 'border-2 border-[#B42318]' : 'border border-[#8A8276]'
+              }`}
+            >
+              <span className="shrink-0 px-3.5 flex items-center bg-[#FBF8F4] border-r border-[#E7E0D7] text-[18px] font-semibold text-[#3D5357]">
+                +92
+              </span>
+              <input
+                id="ca-ph"
+                type="tel"
+                inputMode="numeric"
+                autoComplete="tel-national"
+                value={phone}
+                onChange={(e) => {
+                  setPhone(e.target.value.replace(/[^\d ]/g, '').slice(0, 12));
+                  setTaken(false);
+                }}
+                placeholder="300 1234567"
+                className="flex-1 min-w-0 border-0 outline-none px-3.5 text-[20px] font-semibold tracking-[0.02em] bg-transparent text-[#0B2A2F]"
+              />
             </div>
-            <Input
-              label="Owner mobile number"
-              placeholder="0300 1112233"
-              value={phone}
-              onChange={(e) => {
-                setPhone(e.target.value);
-                setError('');
-              }}
-              error={error}
-              hint="Format: 03XX XXXXXXX"
-            />
-            <label className="flex items-start gap-2.5 text-[13px] text-[#3D5357] cursor-pointer">
+            <span className="text-[14px] leading-[1.5] text-[#52666A]">
+              10 digits after +92, starting with 3
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-0.5">
+            <label className="flex items-start gap-3 min-h-[44px] cursor-pointer">
               <input
                 type="checkbox"
-                checked={termsAccepted}
-                onChange={(e) => {
-                  setTermsAccepted(e.target.checked);
-                  setError('');
-                }}
-                className="w-4 h-4 mt-0.5 accent-[#08343A]"
+                checked={agree}
+                onChange={(e) => setAgree(e.target.checked)}
+                className="w-[22px] h-[22px] mt-0.5 shrink-0 accent-[#08343A]"
               />
-              <span>
-                I agree to set up this browser as an offline-capable retail counter for my shop.
+              <span className="text-[16px] leading-[1.5] text-[#0B2A2F]">
+                I agree to Zyro’s terms of use and privacy policy
               </span>
             </label>
-            <div className="flex justify-between items-center pt-2">
-              <Link href="/welcome">
-                <Button variant="secondary">
-                  <ArrowLeft className="w-4 h-4" /> Back
-                </Button>
-              </Link>
-              <Button variant="primary" size="lg" onClick={nextFromPhone}>
-                Send 6-digit code <ArrowRight className="w-4 h-4" />
-              </Button>
-            </div>
+            <button
+              type="button"
+              onClick={() => notify('Terms and privacy open in a new tab', 'info')}
+              className="self-start h-[44px] ps-[34px] text-[#0E5E66] text-[14px] font-semibold underline underline-offset-[3px]"
+            >
+              Read them
+            </button>
           </div>
-        )}
 
-        {step === 'code' && (
-          <div className="space-y-4">
-            <div>
-              <h1 className="font-display text-[24px] font-bold text-[#0B2A2F]">Check your SMS</h1>
-              <p className="text-[14px] text-[#52666A] mt-1">
-                Enter the 6-digit code sent to <span className="font-semibold text-[#0B2A2F] mono">{formatPhoneIntl(phone)}</span>.
-              </p>
+          {taken && (
+            <div
+              role="alert"
+              className="flex gap-3 p-[14px_16px] rounded-[14px] bg-[#FDF0EF] text-[#B42318] max-w-[560px]"
+            >
+              <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+              <div className="flex-1 flex flex-col gap-2">
+                <strong className="text-[16px]">This number already has a Zyro account</strong>
+                <span className="text-[14px] leading-[1.5]">
+                  Sign in with it to open your shop, or use another number for a new one.
+                </span>
+                <Link
+                  href="/sign-in"
+                  className="bs self-start h-[44px] px-3.5 rounded-[12px] border border-[#B42318] bg-white text-[#B42318] text-[14px] font-bold inline-flex items-center"
+                >
+                  Sign in instead
+                </Link>
+              </div>
             </div>
-            <Input
-              label="6-digit verification code"
-              value={otp}
+          )}
+        </>
+      )}
+
+      {/* STEP 2: SMS CODE */}
+      {step === 'code' && (
+        <>
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <span
+              dir="ltr"
+              className="h-[36px] px-3 rounded-full bg-white border border-[#E7E0D7] inline-flex items-center gap-2 text-[15px] font-semibold"
+            >
+              <Phone className="w-4 h-4" />
+              {phoneFormatted}
+            </span>
+            <button
+              type="button"
+              onClick={() => setStep('phone')}
+              className="h-[44px] px-1.5 text-[#0E5E66] text-[14px] font-semibold hover:underline"
+            >
+              Change number
+            </button>
+          </div>
+
+          <div className="flex flex-col gap-1.5 max-w-[360px]">
+            <label htmlFor="ca-code" className="text-[14px] font-semibold text-[#3D5357]">
+              6-digit code
+            </label>
+            <input
+              id="ca-code"
+              dir="ltr"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              value={code}
               onChange={(e) => {
-                setOtp(e.target.value);
-                setError('');
+                setCode(e.target.value.replace(/\D/g, '').slice(0, 6));
+                setCodeBad(false);
               }}
-              error={error}
-              hint="Demo verification code prefilled: 482910"
-              className="mono"
+              placeholder="••••••"
+              className={`field h-[64px] rounded-[12px] bg-white px-[18px] mono text-[30px] font-medium tracking-[0.4em] text-[#0B2A2F] text-center ${
+                codeBad ? 'border-2 border-[#B42318]' : 'border border-[#8A8276]'
+              }`}
             />
-            <div className="flex justify-between items-center pt-2">
-              <Button variant="secondary" onClick={() => setStep('phone')}>
-                <ArrowLeft className="w-4 h-4" /> Change number
-              </Button>
-              <Button variant="primary" size="lg" onClick={nextFromCode}>
-                Verify code <ArrowRight className="w-4 h-4" />
-              </Button>
-            </div>
+            <span
+              role={codeBad ? 'alert' : 'note'}
+              className={`text-[14px] leading-[1.5] ${codeBad ? 'text-[#B42318]' : 'text-[#52666A]'}`}
+            >
+              {codeBad
+                ? 'That code didn’t match. 4 tries left, then wait 15 minutes.'
+                : 'No SMS after a minute? Check the number, then send again. (Demo: 482913)'}
+            </span>
           </div>
-        )}
 
-        {step === 'you' && (
-          <div className="space-y-4">
-            <div>
-              <h1 className="font-display text-[24px] font-bold text-[#0B2A2F]">Your name and password</h1>
-              <p className="text-[14px] text-[#52666A] mt-1">
-                Only the owner signs in with a password. Cashiers use 4-digit PINs at the counter.
-              </p>
-            </div>
-            <Input
-              label="Your full name"
-              value={fullName}
-              onChange={(e) => {
-                setFullName(e.target.value);
-                setError('');
-              }}
+          <button
+            type="button"
+            onClick={() => {
+              setCode('482913');
+              setCodeBad(false);
+              notify('New 6-digit SMS code sent: 482913', 'info');
+            }}
+            className="bs self-start h-[44px] px-3.5 rounded-[12px] border border-[#E7E0D7] bg-white text-[14px] font-semibold"
+          >
+            Send again
+          </button>
+        </>
+      )}
+
+      {/* STEP 3: ABOUT YOU */}
+      {step === 'you' && (
+        <>
+          <div className="flex flex-col gap-1.5 max-w-[440px]">
+            <label htmlFor="ca-nm" className="text-[14px] font-semibold text-[#3D5357]">
+              Your full name
+            </label>
+            <input
+              id="ca-nm"
+              type="text"
+              autoComplete="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Hamza Sheikh"
+              className="field h-[52px] border border-[#8A8276] rounded-[12px] bg-white px-3.5 text-[17px] text-[#0B2A2F]"
             />
-            <Input
-              label="Create a password"
-              type="password"
-              value={password}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                setError('');
-              }}
-              error={error}
-              hint="At least 8 characters with letters and numbers"
+          </div>
+
+          <div className="flex flex-col gap-1.5 max-w-[440px]">
+            <label htmlFor="ca-em" className="text-[14px] font-semibold text-[#3D5357]">
+              Email · optional
+            </label>
+            <input
+              id="ca-em"
+              dir="ltr"
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="name@yourshop.pk"
+              className="field h-[52px] border border-[#8A8276] rounded-[12px] bg-white px-3.5 text-[17px] text-[#0B2A2F]"
             />
-            <div className="flex justify-between items-center pt-2">
-              <Button variant="secondary" onClick={() => setStep('code')}>
-                <ArrowLeft className="w-4 h-4" /> Back
-              </Button>
-              <Button variant="primary" size="lg" onClick={nextFromYou}>
-                Continue <ArrowRight className="w-4 h-4" />
-              </Button>
-            </div>
+            <span className="text-[14px] leading-[1.5] text-[#52666A]">
+              To reset your password if you change your number.
+            </span>
           </div>
-        )}
 
-        {step === 'shop' && (
-          <div className="space-y-4">
-            <div>
-              <h1 className="font-display text-[24px] font-bold text-[#0B2A2F]">Name your shop</h1>
-              <p className="text-[14px] text-[#52666A] mt-1">
-                Shown at the top of every 80 mm receipt and customer Khata statement.
-              </p>
+          <div className="flex flex-col gap-1.5 max-w-[440px]">
+            <label htmlFor="ca-pw" className="text-[14px] font-semibold text-[#3D5357]">
+              Password
+            </label>
+            <div
+              dir="ltr"
+              className={`field flex items-center h-[52px] rounded-[12px] bg-white overflow-hidden ${
+                pw && !pwOk ? 'border-2 border-[#B42318]' : 'border border-[#8A8276]'
+              }`}
+            >
+              <input
+                id="ca-pw"
+                type={pwShown ? 'text' : 'password'}
+                autoComplete="new-password"
+                value={pw}
+                onChange={(e) => setPw(e.target.value)}
+                className="flex-1 min-w-0 h-full border-0 outline-none px-3.5 text-[17px] bg-transparent text-[#0B2A2F]"
+              />
+              <button
+                type="button"
+                aria-pressed={pwShown}
+                onClick={() => setPwShown((v) => !v)}
+                className="bs h-[40px] mx-1.5 px-3 border-0 rounded-[9px] bg-[#F1EBE3] text-[14px] font-semibold text-[#0B2A2F]"
+              >
+                {pwShown ? 'Hide' : 'Show'}
+              </button>
             </div>
-            <Input
-              label="Shop name"
-              value={shopName}
-              onChange={(e) => {
-                setShopName(e.target.value);
-                setError('');
-              }}
-              error={error}
-            />
-            <Input label="City" value={city} onChange={(e) => setCity(e.target.value)} />
-            <div className="flex justify-between items-center pt-2">
-              <Button variant="secondary" onClick={() => setStep('you')}>
-                <ArrowLeft className="w-4 h-4" /> Back
-              </Button>
-              <Button variant="primary" size="lg" onClick={nextFromShop}>
-                Choose shop type <ArrowRight className="w-4 h-4" />
-              </Button>
-            </div>
+            <ul className="mt-1 p-0 list-none flex flex-col gap-1">
+              {[
+                { ok: r1, text: '8 or more characters' },
+                { ok: r2, text: 'At least one number' },
+                { ok: r3, text: 'Not your phone number' },
+              ].map((rule) => (
+                <li
+                  key={rule.text}
+                  className="flex items-center gap-2 text-[14px]"
+                  style={{ color: rule.ok ? '#14532D' : '#52666A' }}
+                >
+                  {rule.ok ? (
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  ) : (
+                    <span className="w-4 h-4 rounded-full border-2 border-current shrink-0" />
+                  )}
+                  <span>{rule.text}</span>
+                </li>
+              ))}
+            </ul>
           </div>
-        )}
+        </>
+      )}
 
-        {step === 'kind' && (
-          <div className="space-y-4">
-            <div>
-              <h1 className="font-display text-[24px] font-bold text-[#0B2A2F]">What do you sell?</h1>
-              <p className="text-[14px] text-[#52666A] mt-1">
-                ZYRO tailors categories, sizes, expiry dates, and barcode rules to your shop type.
-              </p>
+      {/* STEP 4: YOUR SHOP + RECEIPT PREVIEW */}
+      {step === 'shop' && (
+        <div className="flex gap-7 items-start flex-wrap">
+          <div className="flex-1 min-w-[280px] max-w-[460px] flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="ca-sn" className="text-[14px] font-semibold text-[#3D5357]">
+                Shop name
+              </label>
+              <input
+                id="ca-sn"
+                type="text"
+                autoComplete="organization"
+                value={shop}
+                onChange={(e) => setShop(e.target.value)}
+                placeholder="Stride Footwear"
+                className="field h-[52px] border border-[#8A8276] rounded-[12px] bg-white px-3.5 text-[17px] text-[#0B2A2F]"
+              />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {KITS.map((k) => {
-                const active = k.id === selectedKit;
-                return (
-                  <button
-                    key={k.id}
-                    type="button"
-                    onClick={() => setSelectedKit(k.id)}
-                    className={`tile p-3.5 rounded-[12px] border text-start flex items-start justify-between gap-2 ${
-                      active
-                        ? 'bg-[#FCEFE4] border-[#C9682E]'
-                        : 'bg-white border-[#E7E0D7] hover:bg-[#FBF8F4]'
-                    }`}
-                  >
-                    <div>
-                      <div className="font-semibold text-[14px] text-[#0B2A2F]">{k.name}</div>
-                      <div className="text-[12px] text-[#52666A] mt-0.5">{k.sub}</div>
-                    </div>
-                    {active && <Check className="w-4 h-4 text-[#C9682E] shrink-0 mt-0.5" />}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="flex justify-between items-center pt-2">
-              <Button variant="secondary" onClick={() => setStep('shop')}>
-                <ArrowLeft className="w-4 h-4" /> Back
-              </Button>
-              <Button variant="primary" size="lg" onClick={startBuildShop}>
-                Build my shop <ArrowRight className="w-4 h-4" />
-              </Button>
-            </div>
-          </div>
-        )}
 
-        {step === 'building' && (
-          <div className="py-10 text-center space-y-4">
-            <div className="w-12 h-12 rounded-full border-4 border-[#EAE3D9] border-t-[#E58A4E] animate-spin mx-auto" />
-            <h2 className="font-display text-[20px] font-bold text-[#0B2A2F]">Setting up {shopName}…</h2>
-            <p className="text-[14px] text-[#52666A]">
-              Preparing {kitConfig.name} categories, starter stock rules, and Main branch.
-            </p>
-          </div>
-        )}
-
-        {step === 'ready' && (
-          <div className="py-6 text-center space-y-5">
-            <div className="w-14 h-14 rounded-full bg-[#E8F6EE] text-[#14532D] mx-auto flex items-center justify-center">
-              <CheckCircle2 className="w-8 h-8" />
+            <div className="flex gap-3">
+              <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+                <label htmlFor="ca-ct" className="text-[14px] font-semibold text-[#3D5357]">
+                  City
+                </label>
+                <select
+                  id="ca-ct"
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  className="field h-[52px] border border-[#8A8276] rounded-[12px] bg-white px-3 text-[17px] text-[#0B2A2F]"
+                >
+                  {CITIES.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex-[1.3] min-w-0 flex flex-col gap-1.5">
+                <label htmlFor="ca-ar" className="text-[14px] font-semibold text-[#3D5357]">
+                  Market or area · optional
+                </label>
+                <input
+                  id="ca-ar"
+                  type="text"
+                  autoComplete="address-line1"
+                  value={area}
+                  onChange={(e) => setArea(e.target.value)}
+                  placeholder="Liberty Market"
+                  className="field h-[52px] border border-[#8A8276] rounded-[12px] bg-white px-3.5 text-[17px] text-[#0B2A2F]"
+                />
+              </div>
             </div>
-            <div className="space-y-1">
-              <h1 className="font-display text-[24px] font-bold text-[#0B2A2F]">{shopName} is ready</h1>
-              <p className="text-[14px] text-[#52666A]">
-                {kitConfig.name} starter kit configured in {city}. You can rename categories or add items anytime.
-              </p>
-            </div>
-            <Button variant="primary" size="lg" onClick={finishSetup}>
-              Open shop dashboard <ArrowRight className="w-4 h-4" />
-            </Button>
-          </div>
-        )}
-      </Card>
 
-      {/* Right preview card */}
-      <Card tone="raised" className="lg:col-span-5 space-y-4">
-        <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-[10px] bg-[#08343A] text-white flex items-center justify-center">
-            <Store className="w-4 h-4" />
-          </div>
-          <div>
-            <div className="font-display font-bold text-[15px] text-[#0B2A2F]">{shopName || 'Your shop'}</div>
-            <div className="text-[12px] text-[#52666A]">{kitConfig.name}</div>
-          </div>
-        </div>
-        <div className="border-t border-[#E7E0D7] pt-3 space-y-2.5">
-          <div className="text-[12px] font-semibold uppercase tracking-wider text-[#52666A]">
-            What this kit sets up
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {kitConfig.cats.length > 0 ? (
-              kitConfig.cats.map((c) => (
-                <Badge key={c} tone="neutral">
-                  {c}
-                </Badge>
-              ))
-            ) : (
-              <Badge tone="neutral">Custom categories</Badge>
+            {city === 'Other' && (
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="ca-oc" className="text-[14px] font-semibold text-[#3D5357]">
+                  City name
+                </label>
+                <input
+                  id="ca-oc"
+                  type="text"
+                  value={cityName}
+                  onChange={(e) => setCityName(e.target.value)}
+                  placeholder="Sargodha"
+                  className="field h-[52px] border border-[#8A8276] rounded-[12px] bg-white px-3.5 text-[17px] text-[#0B2A2F]"
+                />
+              </div>
             )}
+
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[14px] font-semibold text-[#3D5357]">How many branches?</span>
+              <div role="radiogroup" className="flex gap-2">
+                {(
+                  [
+                    [1, 'Just one'],
+                    [2, '2 or 3'],
+                    [4, '4 or more'],
+                  ] as const
+                ).map(([val, label]) => {
+                  const on = branches === val;
+                  return (
+                    <button
+                      key={val}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      onClick={() => setBranches(val)}
+                      className="flex-1 h-[48px] rounded-[12px] text-[14px] font-semibold text-[#0B2A2F]"
+                      style={{
+                        border: on ? '2px solid #C9682E' : '1px solid #D6CDC1',
+                        backgroundColor: on ? '#FCEFE4' : '#FFFFFF',
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="text-[14px] text-[#52666A]">
+                You start with the main branch. Add the others in Settings.
+              </span>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <span
+                aria-hidden="true"
+                className="w-[52px] h-[52px] shrink-0 rounded-[14px] flex items-center justify-center font-display text-[22px] font-bold"
+                style={{
+                  backgroundColor: hasLogo ? '#08343A' : '#F1EBE3',
+                  color: hasLogo ? '#E58A4E' : '#52666A',
+                  border: hasLogo ? '0' : '1px dashed #C9C1B6',
+                }}
+              >
+                {shopInitial}
+              </span>
+              <span className="flex-1 flex flex-col gap-0.5">
+                <span className="text-[14px] font-semibold text-[#3D5357]">Logo · optional</span>
+                <span className="text-[14px] text-[#52666A]">
+                  {hasLogo ? 'logo.png · on receipts and labels' : 'A letter stands in until you add one'}
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setHasLogo((v) => !v)}
+                className="bs h-[44px] px-3.5 rounded-[12px] text-[14px] font-semibold inline-flex items-center gap-1.5"
+              >
+                {hasLogo ? <Trash2 className="w-4 h-4" /> : <Upload className="w-4 h-4" />}
+                {hasLogo ? 'Remove' : 'Add logo'}
+              </button>
+            </div>
           </div>
-          <ul className="space-y-1.5 text-[13px] text-[#3D5357] pt-1">
-            {kitConfig.extras.map((ex) => (
-              <li key={ex} className="flex items-center gap-2">
-                <Check className="w-4 h-4 text-[#2F9E63] shrink-0" />
-                <span>{ex}</span>
-              </li>
-            ))}
-          </ul>
+
+          <figure className="hidden md:flex m-0 w-[260px] shrink-0 flex-col gap-2">
+            <figcaption className="text-[14px] font-semibold text-[#52666A]">
+              Your receipt starts like this
+            </figcaption>
+            <div
+              dir="ltr"
+              className="bg-white rounded-[4px] shadow-[0_1px_2px_rgba(15,31,25,.08)] pt-[18px] px-4 pb-[22px] flex flex-col items-center gap-1 mono text-[#111111] text-center"
+            >
+              {hasLogo && (
+                <span className="w-10 h-10 rounded-[10px] border-2 border-[#111111] flex items-center justify-center font-display text-[20px] font-bold mb-1">
+                  {shopInitial}
+                </span>
+              )}
+              <span className="font-sans text-[17px] font-bold">{shopName}</span>
+              <span className="text-[12px] text-[#555555]">
+                {(area.trim() ? `${area.trim()}, ` : '') + cityShown}
+              </span>
+              <span className="text-[12px] text-[#555555]">{phoneFormatted}</span>
+              <span className="w-full border-t border-dashed border-[#9A9A9A] mt-2.5 mb-1.5" />
+              <span className="w-full flex justify-between text-[12px] text-[#555555]">
+                <span>Bill 1</span>
+                <span>14 Nov 2026</span>
+              </span>
+              <span className="w-full flex justify-between text-[12px] text-[#555555]">
+                <span>…</span>
+                <span>…</span>
+              </span>
+            </div>
+          </figure>
         </div>
-      </Card>
-    </div>
+      )}
+
+      {/* STEP 5: WHAT YOU SELL */}
+      {step === 'kind' && (
+        <>
+          <div role="radiogroup" aria-label="What do you sell?" className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+            {KIT_ORDER.map((id) => {
+              const on = id === selectedKit;
+              const k = KIT_META[id];
+              const Icon = k.icon;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => setSelectedKit(id)}
+                  className="min-h-[112px] lg:min-h-[118px] flex flex-col items-start justify-center gap-1.5 py-3 px-3.5 rounded-[14px] text-start text-[#0B2A2F] transition-colors hover:border-[#E2B48F]"
+                  style={{
+                    border: on ? '2px solid #C9682E' : '1px solid #E7E0D7',
+                    backgroundColor: on ? '#FCEFE4' : '#FFFFFF',
+                  }}
+                >
+                  <span
+                    className="w-9 h-9 rounded-full flex items-center justify-center text-[#08343A]"
+                    style={{ backgroundColor: on ? '#FFFFFF' : '#F1EBE3' }}
+                  >
+                    <Icon className="w-[18px] h-[18px]" />
+                  </span>
+                  <span className="text-[16px] font-bold leading-[1.25]">{k.name}</span>
+                  <span className="text-[12px] leading-[1.35] text-[#52666A]">{k.sub}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <section className="bg-white border border-[#E7E0D7] rounded-[16px] py-3.5 px-4 flex flex-col gap-2.5">
+            <h2 className="m-0 text-[16px] font-bold">What Zyro sets up for {kitMeta.name}</h2>
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.5fr)_repeat(3,minmax(0,1fr))] gap-y-2.5 gap-x-5">
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[12px] font-bold tracking-[0.04em] uppercase text-[#52666A]">
+                  Categories
+                </span>
+                <div className="flex gap-1.5 flex-wrap">
+                  {kitCats.map((c) => (
+                    <span
+                      key={c}
+                      className="h-[30px] px-2.5 rounded-full bg-[#F1EBE3] text-[13px] font-semibold inline-flex items-center"
+                    >
+                      {c}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-[12px] font-bold tracking-[0.04em] uppercase text-[#52666A]">
+                  Add item asks for
+                </span>
+                <span className="text-[14px] leading-[1.4]">{kitMeta.asks}</span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-[12px] font-bold tracking-[0.04em] uppercase text-[#52666A]">
+                  Stock counted in
+                </span>
+                <span className="text-[14px] leading-[1.4]">{kitMeta.counts}</span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-[12px] font-bold tracking-[0.04em] uppercase text-[#52666A]">
+                  Barcodes
+                </span>
+                <span className="text-[14px] leading-[1.4]">{kitMeta.barcodes}</span>
+              </div>
+            </div>
+          </section>
+        </>
+      )}
+
+      {/* BUILDING */}
+      {step === 'building' && (
+        <ul aria-live="polite" className="m-0 p-0 list-none flex flex-col gap-1.5 max-w-[560px]">
+          {buildRows.map((txt, idx) => {
+            const done = idx < builtCount;
+            const working = idx === builtCount;
+            return (
+              <li
+                key={txt}
+                className="flex items-center gap-3.5 min-h-[52px] py-1.5 px-3.5 rounded-[14px] border border-[#E7E0D7]"
+                style={{
+                  backgroundColor: done || working ? '#FFFFFF' : '#FBF8F4',
+                  color: done || working ? '#0B2A2F' : '#52666A',
+                }}
+              >
+                <span
+                  className="w-[30px] h-[30px] shrink-0 rounded-full flex items-center justify-center"
+                  style={{
+                    backgroundColor: done ? '#E8F6EE' : working ? '#EDF3FF' : '#F1EBE3',
+                    color: done ? '#14532D' : working ? '#1E40AF' : '#8A8276',
+                  }}
+                >
+                  {done ? (
+                    <Check className="w-4 h-4 stroke-[2.5]" />
+                  ) : working ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Clock className="w-4 h-4" />
+                  )}
+                </span>
+                <span className="flex-1 text-[16px]">{txt}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {/* STEP 6: READY */}
+      {step === 'ready' && (
+        <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+            {[
+              ['Owner', name.trim() || 'Hamza Sheikh'],
+              ['Shop', shopName],
+              ['City', cityShown + (area.trim() ? ` · ${area.trim()}` : '')],
+              ['Sells', kitMeta.name],
+            ].map(([k, v]) => (
+              <div
+                key={k}
+                className="py-2.5 px-3 rounded-[12px] bg-white border border-[#E7E0D7] flex flex-col gap-0.5 min-w-0"
+              >
+                <span className="text-[12px] text-[#52666A]">{k}</span>
+                <span className="text-[14px] font-bold leading-[1.35]">{v}</span>
+              </div>
+            ))}
+          </div>
+
+          <section className="flex flex-col gap-2">
+            <h2 className="m-0 text-[16px] font-bold">Next</h2>
+            <ol className="m-0 p-0 list-none flex flex-col gap-2">
+              {nextCards.map((nx) => (
+                <li key={nx.n}>
+                  <button
+                    type="button"
+                    onClick={() => commitAccount(nx.href)}
+                    className="w-full min-h-[64px] flex items-center gap-3.5 py-2.5 px-3.5 rounded-[14px] text-[#0B2A2F] text-start transition-colors hover:border-[#E2B48F]"
+                    style={{
+                      border: nx.hi ? '2px solid #C9682E' : '1px solid #E7E0D7',
+                      backgroundColor: nx.hi ? '#FCEFE4' : '#FFFFFF',
+                    }}
+                  >
+                    <span
+                      className="num w-[30px] h-[30px] shrink-0 rounded-full flex items-center justify-center text-[13px] font-bold"
+                      style={{
+                        backgroundColor: nx.hi ? '#08343A' : '#F1EBE3',
+                        color: nx.hi ? '#FFFFFF' : '#0B2A2F',
+                      }}
+                    >
+                      {nx.n}
+                    </span>
+                    <span className="flex-1 min-w-0 flex flex-col gap-0.5">
+                      <span className="text-[16px] font-bold">{nx.t}</span>
+                      <span className="text-[14px] leading-[1.4] text-[#52666A]">{nx.s}</span>
+                    </span>
+                    <ChevronRight className="w-[18px] h-[18px] shrink-0 text-[#52666A]" />
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </section>
+        </div>
+      )}
+    </AuthFlowShell>
   );
 }
