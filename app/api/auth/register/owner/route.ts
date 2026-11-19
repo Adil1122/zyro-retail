@@ -6,6 +6,10 @@ import {
   getServerAuthSessionPayload,
 } from '@/lib/auth/server-context';
 import {
+  phoneToInternalAuthEmail,
+  signInWithPhonePasswordFallback,
+} from '@/lib/auth/supabase-phone-signin';
+import {
   createSupabaseServerClient,
   createSupabaseServiceClient,
   isSupabaseAdminConfigured,
@@ -130,11 +134,13 @@ export async function POST(req: NextRequest) {
 
     // 3. Create Supabase Auth user with phone_confirm: true (ONLY because OTP was verified server-side)
     const cleanEmail = body.email?.trim() ? body.email.trim().toLowerCase() : undefined;
+    const authEmail = cleanEmail || phoneToInternalAuthEmail(phoneE164);
     const { data: createdUserData, error: createUserError } = await admin.auth.admin.createUser({
       phone: phoneE164,
       password,
       phone_confirm: true,
-      ...(cleanEmail ? { email: cleanEmail, email_confirm: false } : {}),
+      email: authEmail,
+      email_confirm: true,
       user_metadata: {
         full_name: fullName,
         phone: phoneE164,
@@ -201,10 +207,7 @@ export async function POST(req: NextRequest) {
 
     // 6. Establish real Supabase cookie-backed session for the newly created Owner
     const serverClient = await createSupabaseServerClient();
-    const { error: signInError } = await serverClient.auth.signInWithPassword({
-      phone: phoneE164,
-      password,
-    });
+    const { error: signInError } = await signInWithPhonePasswordFallback(serverClient, phoneE164, password);
 
     const provisioned = workspaceResult as {
       business_id?: string;

@@ -7,6 +7,10 @@ import {
   resolveDashboardRouteForMembership,
 } from '@/lib/auth/server-context';
 import {
+  phoneToInternalAuthEmail,
+  signInWithPhonePasswordFallback,
+} from '@/lib/auth/supabase-phone-signin';
+import {
   createSupabaseServerClient,
   createSupabaseServiceClient,
   isSupabaseAdminConfigured,
@@ -137,6 +141,8 @@ export async function POST(req: NextRequest) {
         phone: invitedPhoneE164,
         password,
         phone_confirm: true,
+        email: phoneToInternalAuthEmail(invitedPhoneE164),
+        email_confirm: true,
         user_metadata: {
           full_name: fullName,
           phone: invitedPhoneE164,
@@ -187,10 +193,7 @@ export async function POST(req: NextRequest) {
 
     // 6. Sign in the activated employee with cookie-backed Supabase session
     const serverClient = await createSupabaseServerClient();
-    const { error: signInError } = await serverClient.auth.signInWithPassword({
-      phone: invitedPhoneE164,
-      password,
-    });
+    const { error: signInError } = await signInWithPhonePasswordFallback(serverClient, invitedPhoneE164, password);
 
     const accepted = acceptResult as {
       business_id?: string;

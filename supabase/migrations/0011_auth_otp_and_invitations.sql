@@ -16,7 +16,7 @@
 --    expiration, attempt limiting, and single-use verification proof token).
 --    Accessed exclusively via trusted Next.js server routes using service_role.
 -- ----------------------------------------------------------------------------
-CREATE TABLE public.auth_otp_challenges (
+CREATE TABLE IF NOT EXISTS public.auth_otp_challenges (
   id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   phone_e164               TEXT NOT NULL CHECK (char_length(trim(phone_e164)) >= 8),
   purpose                  TEXT NOT NULL CHECK (purpose IN ('owner_register', 'staff_invite', 'password_reset')),
@@ -36,17 +36,18 @@ CREATE TABLE public.auth_otp_challenges (
   updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_auth_otp_phone_purpose_created
+CREATE INDEX IF NOT EXISTS idx_auth_otp_phone_purpose_created
   ON public.auth_otp_challenges(phone_e164, purpose, created_at DESC);
 
-CREATE INDEX idx_auth_otp_ip_created
+CREATE INDEX IF NOT EXISTS idx_auth_otp_ip_created
   ON public.auth_otp_challenges(request_ip, created_at DESC)
   WHERE request_ip IS NOT NULL;
 
-CREATE UNIQUE INDEX uq_auth_otp_verification_token_hash
+CREATE UNIQUE INDEX IF NOT EXISTS uq_auth_otp_verification_token_hash
   ON public.auth_otp_challenges(verification_token_hash)
   WHERE verification_token_hash IS NOT NULL;
 
+DROP TRIGGER IF EXISTS trg_auth_otp_challenges_updated_at ON public.auth_otp_challenges;
 CREATE TRIGGER trg_auth_otp_challenges_updated_at
   BEFORE UPDATE ON public.auth_otp_challenges
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
@@ -56,13 +57,14 @@ ALTER TABLE public.auth_otp_challenges ENABLE ROW LEVEL SECURITY;
 -- Deliberately no anon/authenticated RLS policies on auth_otp_challenges.
 -- Only service_role (server-side API routes) can read or mutate OTP challenges.
 REVOKE ALL ON TABLE public.auth_otp_challenges FROM anon, authenticated;
+GRANT ALL ON TABLE public.auth_otp_challenges TO service_role;
 
 -- ----------------------------------------------------------------------------
 -- 2. business_invitations
 --    Secure single-use staff invitations linking business, branch, role,
 --    invited mobile number, expiration, and hashed invitation token.
 -- ----------------------------------------------------------------------------
-CREATE TABLE public.business_invitations (
+CREATE TABLE IF NOT EXISTS public.business_invitations (
   id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id           UUID NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
   branch_id             UUID NOT NULL REFERENCES public.branches(id) ON DELETE CASCADE,
@@ -83,21 +85,24 @@ CREATE TABLE public.business_invitations (
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_business_invitations_business_status
+CREATE INDEX IF NOT EXISTS idx_business_invitations_business_status
   ON public.business_invitations(business_id, status, created_at DESC);
 
-CREATE INDEX idx_business_invitations_phone_status
+CREATE INDEX IF NOT EXISTS idx_business_invitations_phone_status
   ON public.business_invitations(invited_phone_e164, status, expires_at DESC);
 
-CREATE INDEX idx_business_invitations_branch_id
+CREATE INDEX IF NOT EXISTS idx_business_invitations_branch_id
   ON public.business_invitations(branch_id);
 
+DROP TRIGGER IF EXISTS trg_business_invitations_updated_at ON public.business_invitations;
 CREATE TRIGGER trg_business_invitations_updated_at
   BEFORE UPDATE ON public.business_invitations
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 ALTER TABLE public.business_invitations ENABLE ROW LEVEL SECURITY;
+GRANT ALL ON TABLE public.business_invitations TO service_role;
 
+DROP POLICY IF EXISTS business_invitations_select_authorized ON public.business_invitations;
 CREATE POLICY business_invitations_select_authorized
   ON public.business_invitations
   FOR SELECT
@@ -110,6 +115,7 @@ CREATE POLICY business_invitations_select_authorized
     )
   );
 
+DROP POLICY IF EXISTS business_invitations_insert_authorized ON public.business_invitations;
 CREATE POLICY business_invitations_insert_authorized
   ON public.business_invitations
   FOR INSERT
@@ -122,6 +128,7 @@ CREATE POLICY business_invitations_insert_authorized
     )
   );
 
+DROP POLICY IF EXISTS business_invitations_update_authorized ON public.business_invitations;
 CREATE POLICY business_invitations_update_authorized
   ON public.business_invitations
   FOR UPDATE
@@ -445,3 +452,6 @@ $$;
 
 REVOKE ALL ON FUNCTION public.accept_business_invitation_for_user(UUID, UUID, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.accept_business_invitation_for_user(UUID, UUID, TEXT, TEXT) TO service_role;
+
+-- Refresh PostgREST schema cache immediately
+NOTIFY pgrst, 'reload schema';

@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers';
 import type { NextRequest } from 'next/server';
+import { isInternalAuthEmail } from '@/lib/auth/supabase-phone-signin';
 import {
   createSupabaseServerClient,
   createSupabaseServiceClient,
@@ -324,7 +325,7 @@ export async function getServerAuthSessionPayload(): Promise<AuthSessionPayload>
       fullName,
       shortName: profileRow?.short_name || fullName.split(' ')[0] || 'User',
       phone: profileRow?.phone || user.phone || null,
-      email: user.email || null,
+      email: user.email && !isInternalAuthEmail(user.email) ? user.email : null,
       avatarBg: profileRow?.avatar_bg || '#08343A',
       avatarFg: profileRow?.avatar_fg || '#FFFFFF',
       initials: getInitials(fullName),

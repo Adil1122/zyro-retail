@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { normalizePhoneToE164, validatePasswordStrength } from '@/lib/auth/phone';
 import { getServerAuthSessionPayload } from '@/lib/auth/server-context';
+import { signInWithPhonePasswordFallback } from '@/lib/auth/supabase-phone-signin';
 import {
   createSupabaseServerClient,
   createSupabaseServiceClient,
@@ -111,10 +112,7 @@ export async function POST(req: NextRequest) {
     let redirectTo = '/sign-in';
     if (body.autoSignIn !== false) {
       const serverClient = await createSupabaseServerClient();
-      const { error: signInError } = await serverClient.auth.signInWithPassword({
-        phone: phoneE164,
-        password: newPassword,
-      });
+      const { error: signInError } = await signInWithPhonePasswordFallback(serverClient, phoneE164, newPassword);
       if (!signInError) {
         session = await getServerAuthSessionPayload();
         redirectTo = session.recommendedRedirect;

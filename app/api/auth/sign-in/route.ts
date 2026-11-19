@@ -5,6 +5,7 @@ import {
   ACTIVE_BUSINESS_COOKIE,
   getServerAuthSessionPayload,
 } from '@/lib/auth/server-context';
+import { signInWithPhonePasswordFallback } from '@/lib/auth/supabase-phone-signin';
 import { createSupabaseServerClient, isSupabaseServerConfigured } from '@/lib/supabase/server';
 
 export async function POST(req: NextRequest) {
@@ -43,13 +44,17 @@ export async function POST(req: NextRequest) {
     const isEmail = rawIdentifier.includes('@');
 
     let signInErrorMessage: string | null = null;
+    let signInErrorCode: string | null = null;
 
     if (isEmail) {
       const { error } = await supabase.auth.signInWithPassword({
         email: rawIdentifier.toLowerCase(),
         password,
       });
-      if (error) signInErrorMessage = error.message;
+      if (error) {
+        signInErrorMessage = error.message;
+        signInErrorCode = error.code ?? null;
+      }
     } else {
       const normalized = normalizePhoneToE164(rawIdentifier, body?.dialCode || '+92');
       if (!normalized.valid || !normalized.e164) {
@@ -59,14 +64,29 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const { error } = await supabase.auth.signInWithPassword({
-        phone: normalized.e164,
-        password,
-      });
-      if (error) signInErrorMessage = error.message;
+      const { error } = await signInWithPhonePasswordFallback(supabase, normalized.e164, password);
+      if (error) {
+        signInErrorMessage = error.message;
+        signInErrorCode = error.code ?? null;
+      }
     }
 
     if (signInErrorMessage) {
+      if (
+        signInErrorCode === 'phone_provider_disabled' ||
+        /phone logins are disabled/i.test(signInErrorMessage)
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            code: 'PHONE_PROVIDER_DISABLED',
+            error:
+              'Phone sign-in is disabled in Supabase. Go to Supabase Dashboard → Authentication → Providers → Phone and turn ON "Enable Phone provider".',
+          },
+          { status: 503 },
+        );
+      }
+
       return NextResponse.json(
         {
           ok: false,
