@@ -16,8 +16,8 @@ export const OTP_TTL_SECONDS = 300; // 5 minutes
 export const OTP_RESEND_COOLDOWN_SECONDS = 60; // 60 seconds
 export const OTP_MAX_ATTEMPTS = 5;
 export const OTP_PHONE_RATE_WINDOW_MINUTES = 15;
-export const OTP_MAX_REQUESTS_PER_PHONE_WINDOW = 5;
-export const OTP_MAX_REQUESTS_PER_IP_WINDOW = 20;
+export const OTP_MAX_REQUESTS_PER_PHONE_WINDOW = 20;
+export const OTP_MAX_REQUESTS_PER_IP_WINDOW = 50;
 export const VERIFICATION_TOKEN_TTL_SECONDS = 900; // 15 minutes to complete registration/reset after OTP verify
 
 export interface OtpChallengeRow {
@@ -225,18 +225,20 @@ export class OtpService {
     const nowMs = nowDate.getTime();
     const windowSinceIso = new Date(nowMs - OTP_PHONE_RATE_WINDOW_MINUTES * 60_000).toISOString();
 
-    // 1. Check resend cooldown (60 seconds)
-    const latest = await this.repo.findLatestByPhoneAndPurpose(phoneE164, params.purpose);
-    if (latest) {
-      const elapsedSeconds = Math.floor((nowMs - new Date(latest.created_at).getTime()) / 1000);
-      if (elapsedSeconds >= 0 && elapsedSeconds < OTP_RESEND_COOLDOWN_SECONDS) {
-        const retryAfterSeconds = OTP_RESEND_COOLDOWN_SECONDS - elapsedSeconds;
-        throw new OtpServiceError(
-          `Please wait ${retryAfterSeconds} seconds before requesting another code.`,
-          429,
-          'OTP_COOLDOWN',
-          { retryAfterSeconds },
-        );
+    // 1. Check resend cooldown (60 seconds) only on explicit resend actions
+    if (params.isResend) {
+      const latest = await this.repo.findLatestByPhoneAndPurpose(phoneE164, params.purpose);
+      if (latest) {
+        const elapsedSeconds = Math.floor((nowMs - new Date(latest.created_at).getTime()) / 1000);
+        if (elapsedSeconds >= 0 && elapsedSeconds < OTP_RESEND_COOLDOWN_SECONDS) {
+          const retryAfterSeconds = OTP_RESEND_COOLDOWN_SECONDS - elapsedSeconds;
+          throw new OtpServiceError(
+            `Please wait ${retryAfterSeconds} seconds before requesting another code.`,
+            429,
+            'OTP_COOLDOWN',
+            { retryAfterSeconds },
+          );
+        }
       }
     }
 

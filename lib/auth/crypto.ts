@@ -50,11 +50,24 @@ export function hashToken(rawToken: string): string {
 }
 
 /**
- * Strict double-gate guard for surfacing development OTPs.
- * Development OTP MUST NEVER be returned unless BOTH:
- *   1. NODE_ENV === 'development'
- *   2. AUTH_OTP_MODE === 'development'
+ * Determines whether the server should surface the generated OTP code in the API response
+ * so it can be displayed on the verification screen while SMS delivery is skipped.
+ *
+ * Returns true by default (works on localhost and Vercel without extra env configuration).
+ * Set AUTH_OTP_MODE=production (or sms) once a live SMS provider is connected to hide it.
  */
 export function isDevelopmentOtpModeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.NODE_ENV === 'development' && env.AUTH_OTP_MODE === 'development';
+  const clean = (val?: string) =>
+    (val || '')
+      .trim()
+      .replace(/^['"]|['"]$/g, '')
+      .toLowerCase();
+
+  const otpMode = clean(env.AUTH_OTP_MODE);
+
+  if (otpMode === 'production' || otpMode === 'sms' || otpMode === 'live') {
+    return false;
+  }
+
+  return true;
 }

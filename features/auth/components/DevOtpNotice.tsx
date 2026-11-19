@@ -37,9 +37,9 @@ export function DevOtpNotice({ devOtp, onUseCode }: DevOtpNoticeProps) {
       <div className="flex items-center justify-between gap-2">
         <span className="inline-flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-[0.06em] text-[#8A3D12]">
           <FlaskConical className="w-4 h-4" />
-          DEVELOPMENT OTP
+          VERIFICATION CODE
         </span>
-        <span className="text-[12px] text-[#8A3D12]">Not sent via SMS · Dev mode only</span>
+        <span className="text-[12px] text-[#8A3D12]">Shown on screen · SMS skipped for now</span>
       </div>
 
       <div className="flex items-center justify-between gap-3">
