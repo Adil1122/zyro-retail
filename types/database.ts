@@ -7050,6 +7050,9 @@ export interface Database {
       collect_khata_payment: { Args: { p_payload: Json }; Returns: Json };
       close_cash_shift: { Args: { p_payload: Json }; Returns: Json };
       transfer_stock: { Args: { p_payload: Json }; Returns: Json };
+      adjust_branch_stock: { Args: { p_payload: Json }; Returns: Json };
+      complete_stock_count: { Args: { p_payload: Json }; Returns: Json };
+      process_footwear_exchange: { Args: { p_payload: Json }; Returns: Json };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;

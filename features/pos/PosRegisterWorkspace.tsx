@@ -1,245 +1,481 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
   BookOpen,
-  FileText,
+  Building2,
   MoreVertical,
   PauseCircle,
   Percent,
-  Receipt,
+  Receipt as ReceiptIcon,
   RefreshCw,
   RotateCcw,
   ScanBarcode,
   ShoppingBag,
   Trash2,
   UserPlus,
-  WifiOff,
 } from 'lucide-react';
-import { CustomerSelector } from '@/components/domain/CustomerSelector';
+import { LiveCustomerSelector } from '@/components/domain/CustomerSelector';
 import { LanguageSwitcher } from '@/components/domain/LanguageSwitcher';
 import { PaymentSummary } from '@/components/domain/PaymentSummary';
 import { ProductArtwork } from '@/components/domain/ProductArtwork';
-import { ProductSelector } from '@/components/domain/ProductSelector';
+import { FootwearProductSelector } from '@/components/domain/ProductSelector';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Dropdown } from '@/components/ui/Dropdown';
 import { SearchInput } from '@/components/ui/SearchInput';
+import { useAuth } from '@/features/auth/hooks/useAuth';
+import { footwearInventoryService } from '@/features/inventory/services/footwear-inventory.service';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useZyro } from '@/hooks/useZyro';
 import { formatRs } from '@/lib/format';
-import { calcDiscountAmount, getFirstInStockColour, getSku, getVariantStock, getVariantText } from '@/lib/inventory';
-import type { BillRecord, CartLine, ProductItem } from '@/types';
+import { calcDiscountAmount } from '@/lib/inventory';
+import type { BillDiscount } from '@/types';
+import type {
+  FootwearProductRecord,
+  FootwearVariantRecord,
+  PosCustomerRecord,
+  PosHeldBillRecord,
+  PosSaleRecord,
+} from '@/types/footwear';
 import {
   DiscountModal,
+  type FootwearCartLine,
   HeldBillsDrawer,
   LineEditModal,
-  MeasuredBlockedModal,
   VariantPickerModal,
 } from './PosOverlays';
-import { SaleCompleteScreen, TenderScreen } from './TenderScreen';
+import { type CheckoutPaymentEntry, SaleCompleteScreen, TenderScreen } from './TenderScreen';
+import { footwearPosService, type PosCatalogResponse } from './services/footwear-pos.service';
+
+function generateSyncId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `pos-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 export function PosRegisterWorkspace() {
-  const {
-    state,
-    settings,
-    user,
-    t,
-    addToCart,
-    updateCartLine,
-    removeCartLine,
-    clearCart,
-    setCartCustomer,
-    setCartDiscount,
-    holdCurrentBill,
-    recallHeldBill,
-    completeSale,
-    notify,
-  } = useZyro();
+  const { t, notify } = useZyro();
+  const { session, activeMembership } = useAuth();
   const router = useRouter();
   const { isPhone } = useBreakpoint();
 
+  const [selectedBranchId, setSelectedBranchId] = useState<string>('');
+  const [catalog, setCatalog] = useState<PosCatalogResponse | null>(null);
+  const [loadingCatalog, setLoadingCatalog] = useState(true);
+  const [heldBills, setHeldBills] = useState<PosHeldBillRecord[]>([]);
+  const [loadingHeld, setLoadingHeld] = useState(false);
+  const [holdingBill, setHoldingBill] = useState(false);
+
+  // Active cart state
+  const [cart, setCart] = useState<FootwearCartLine[]>([]);
+  const [customer, setCustomer] = useState<PosCustomerRecord | null>(null);
+  const [cartDiscount, setCartDiscount] = useState<BillDiscount | null>(null);
+  const [activeHeldBillId, setActiveHeldBillId] = useState<string | null>(null);
+  const [clientSyncId, setClientSyncId] = useState<string>(() => generateSyncId());
+
+  // Checkout stage
   const [stage, setStage] = useState<'register' | 'tender' | 'complete'>('register');
-  const [completedBill, setCompletedBill] = useState<BillRecord | null>(null);
+  const [submittingSale, setSubmittingSale] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [completedSale, setCompletedSale] = useState<PosSaleRecord | null>(null);
+
+  // Scanner & mobile view
   const [barcodeInput, setBarcodeInput] = useState('');
+  const [scanning, setScanning] = useState(false);
   const [mobileView, setMobileView] = useState<'catalog' | 'bill'>('catalog');
 
   // Overlays
-  const [variantItem, setVariantItem] = useState<ProductItem | null>(null);
-  const [measuredBlockedOpen, setMeasuredBlockedOpen] = useState(false);
+  const [variantProduct, setVariantProduct] = useState<FootwearProductRecord | null>(null);
   const [customerOpen, setCustomerOpen] = useState(false);
   const [discountOpen, setDiscountOpen] = useState(false);
   const [heldOpen, setHeldOpen] = useState(false);
-  const [editLine, setEditLine] = useState<CartLine | null>(null);
+  const [editLine, setEditLine] = useState<FootwearCartLine | null>(null);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
 
-  const customer = useMemo(
-    () => state.customers.find((c) => c.id === state.cartCustomerId) || null,
-    [state.customers, state.cartCustomerId]
+  const loadWorkspaceData = useCallback(
+    async (branchOverride?: string) => {
+      setLoadingCatalog(true);
+      setLoadingHeld(true);
+      try {
+        const [catRes, heldRes] = await Promise.all([
+          footwearPosService.getCatalog(branchOverride || undefined),
+          footwearPosService.listHeldBills(branchOverride || undefined),
+        ]);
+        setCatalog(catRes);
+        setHeldBills(heldRes.heldBills);
+        if (!branchOverride && catRes.branch.id) {
+          setSelectedBranchId(catRes.branch.id);
+        }
+      } catch (e) {
+        notify(e instanceof Error ? e.message : 'Failed to load footwear register', 'err');
+      } finally {
+        setLoadingCatalog(false);
+        setLoadingHeld(false);
+      }
+    },
+    [notify]
   );
+
+  useEffect(() => {
+    void loadWorkspaceData(selectedBranchId || undefined);
+  }, [selectedBranchId, loadWorkspaceData]);
+
+  // Quick lookup map by barcode / SKU for instant USB/BT scanner matching
+  const variantByCode = useMemo(() => {
+    const map = new Map<string, { product: FootwearProductRecord; variant: FootwearVariantRecord }>();
+    for (const p of catalog?.products || []) {
+      for (const v of p.variants) {
+        if (!v.isActive) continue;
+        map.set(v.sku.toUpperCase(), { product: p, variant: v });
+        if (v.primaryBarcode) {
+          map.set(v.primaryBarcode.toUpperCase(), { product: p, variant: v });
+        }
+        for (const b of v.barcodes) {
+          map.set(b.barcode.toUpperCase(), { product: p, variant: v });
+        }
+      }
+    }
+    return map;
+  }, [catalog]);
+
+  const cartQtyByVariant = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const l of cart) {
+      out[l.variantId] = (out[l.variantId] || 0) + l.qty;
+    }
+    return out;
+  }, [cart]);
 
   const subtotal = useMemo(
-    () => state.cart.reduce((s, l) => s + l.price * l.qty, 0),
-    [state.cart]
+    () => cart.reduce((s, l) => s + Math.max(0, l.price * l.qty - l.lineDiscount), 0),
+    [cart]
   );
   const discountAmt = useMemo(
-    () => calcDiscountAmount(state.cartDiscount, subtotal),
-    [state.cartDiscount, subtotal]
+    () => calcDiscountAmount(cartDiscount, subtotal),
+    [cartDiscount, subtotal]
   );
-  const total = Math.max(0, subtotal - discountAmt);
-  const itemCount = useMemo(
-    () => state.cart.reduce((s, l) => s + l.qty, 0),
-    [state.cart]
-  );
+  const total = Math.max(0, Number((subtotal - discountAmt).toFixed(2)));
+  const itemCount = useMemo(() => cart.reduce((s, l) => s + l.qty, 0), [cart]);
 
-  const handleSelectProduct = (item: ProductItem) => {
-    if (item.measured) {
-      if (!state.measuredPilotUnlocked) {
-        setMeasuredBlockedOpen(true);
+  const addVariantToCart = useCallback(
+    (variant: FootwearVariantRecord, product: FootwearProductRecord) => {
+      if (!variant.isActive || !product.isActive) {
+        notify(`${product.name} is inactive and cannot be sold`, 'err');
         return;
       }
-      addToCart({
-        key: `${item.id}-m-x`,
-        itemId: item.id,
-        name: item.name,
-        variantText: `Measured (${item.unit || '/ m'})`,
-        sku: item.sku,
-        colourIdx: null,
-        sizeIdx: null,
-        price: item.price,
-        originalPrice: item.price,
-        qty: 1,
-        lineDiscount: 0,
+      if (variant.availableStock <= 0) {
+        notify(`${product.name} (${variant.colourName} · ${variant.sizingSystem} ${variant.sizeName}) is out of stock`, 'err');
+        return;
+      }
+
+      setCart((prev) => {
+        const existing = prev.find((l) => l.variantId === variant.id);
+        if (existing) {
+          if (existing.qty + 1 > variant.availableStock) {
+            notify(`Only ${variant.availableStock} pairs in stock for ${variant.sku}`, 'warn');
+            return prev;
+          }
+          return prev.map((l) =>
+            l.variantId === variant.id
+              ? { ...l, qty: l.qty + 1, availableStock: variant.availableStock }
+              : l
+          );
+        }
+        const nextLine: FootwearCartLine = {
+          key: variant.id,
+          productId: product.id,
+          variantId: variant.id,
+          name: product.name,
+          brand: product.brand,
+          artId: product.artId,
+          imageUrl: product.primaryImageUrl,
+          variantText: `${variant.colourName} · ${variant.sizingSystem} ${variant.sizeName}`,
+          colourName: variant.colourName,
+          sizeName: variant.sizeName,
+          sizingSystem: variant.sizingSystem,
+          sku: variant.sku,
+          barcode: variant.primaryBarcode,
+          price: variant.sellingPrice,
+          originalPrice: variant.sellingPrice,
+          qty: 1,
+          availableStock: variant.availableStock,
+          lineDiscount: 0,
+        };
+        return [...prev, nextLine];
       });
-      notify(`Added 1 ${item.unit?.replace('/', '').trim() || 'm'} ${item.name} (tap line to enter decimal cut)`, 'ok');
+      notify(`Added ${product.name} (${variant.colourName} · ${variant.sizingSystem} ${variant.sizeName})`, 'ok');
+    },
+    [notify]
+  );
+
+  const handleSelectProduct = (product: FootwearProductRecord) => {
+    const activeVariants = product.variants.filter((v) => v.isActive);
+    if (activeVariants.length === 0) {
+      notify(`${product.name} has no active variants`, 'err');
       return;
     }
-    if (item.colours && item.colours.length > 0) {
-      setVariantItem(item);
+    if (activeVariants.length === 1) {
+      addVariantToCart(activeVariants[0], product);
       return;
     }
-    const stock = getVariantStock(item, null, null);
-    if (stock === 0) {
-      notify(`${item.name} is out of stock`, 'err');
-      return;
-    }
-    addToCart({
-      key: `${item.id}-x-x`,
-      itemId: item.id,
-      name: item.name,
-      variantText: 'One size',
-      sku: item.sku,
-      colourIdx: null,
-      sizeIdx: null,
-      price: item.price,
-      originalPrice: item.price,
-      qty: 1,
-      lineDiscount: 0,
-    });
-    notify(`Added ${item.name}`, 'ok');
+    setVariantProduct(product);
   };
 
-  const handleBarcodeSubmit = () => {
-    const q = barcodeInput.trim().toUpperCase();
-    if (!q) return;
-    const match = state.items.find(
-      (it) =>
-        it.sku.toUpperCase() === q ||
-        q.startsWith(it.sku.toUpperCase() + '-') ||
-        (it.barcode && it.barcode.toUpperCase() === q)
-    );
-    if (!match) {
-      notify(`Barcode “${q}” not found`, 'err');
-      return;
-    }
-    if (match.measured) {
-      if (!state.measuredPilotUnlocked) {
-        setMeasuredBlockedOpen(true);
+  const processBarcode = useCallback(
+    async (rawCode: string) => {
+      const code = rawCode.trim().toUpperCase();
+      if (!code) return;
+
+      // Fast path: match against loaded branch catalog
+      const localMatch = variantByCode.get(code);
+      if (localMatch) {
+        addVariantToCart(localMatch.variant, localMatch.product);
         setBarcodeInput('');
         return;
       }
-      addToCart({
-        key: `${match.id}-m-x`,
-        itemId: match.id,
-        name: match.name,
-        variantText: `Measured (${match.unit || '/ m'})`,
-        sku: match.sku,
-        colourIdx: null,
-        sizeIdx: null,
-        price: match.price,
-        originalPrice: match.price,
-        qty: 1,
-        lineDiscount: 0,
-      });
-      notify(`Added ${match.name} (tap line to enter decimal cut)`, 'ok');
-      setBarcodeInput('');
-      return;
-    }
 
-    let ci: number | null = null;
-    let si: number | null = null;
-
-    if (match.colours && match.colours.length > 0) {
-      const sizeCount = match.sizes && match.sizes.length > 0 ? match.sizes.length : 0;
-      let foundExact = false;
-      for (let cIdx = 0; cIdx < match.colours.length && !foundExact; cIdx++) {
-        if (sizeCount > 0) {
-          for (let sIdx = 0; sIdx < sizeCount; sIdx++) {
-            if (getSku(match, cIdx, sIdx).toUpperCase() === q) {
-              ci = cIdx;
-              si = sIdx;
-              foundExact = true;
-              break;
-            }
-          }
-        } else if (getSku(match, cIdx, null).toUpperCase() === q) {
-          ci = cIdx;
-          si = null;
-          foundExact = true;
+      // Live DB lookup fallback
+      setScanning(true);
+      try {
+        const res = await footwearInventoryService.lookupBarcode(code, selectedBranchId || undefined);
+        if (!res.found || !res.variant || !res.product) {
+          notify(`Barcode or SKU “${code}” not found`, 'err');
+          return;
         }
+        addVariantToCart(res.variant, res.product);
+        setBarcodeInput('');
+      } catch (e) {
+        notify(e instanceof Error ? e.message : 'Barcode lookup failed', 'err');
+      } finally {
+        setScanning(false);
+      }
+    },
+    [variantByCode, selectedBranchId, addVariantToCart, notify]
+  );
+
+  // Global USB / Bluetooth keyboard-wedge barcode scanner listener
+  const scanBufferRef = useRef('');
+  const lastKeyTimeRef = useRef(0);
+
+  useEffect(() => {
+    if (stage !== 'register') return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isEditable =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable);
+      if (isEditable) return;
+
+      const now = Date.now();
+      if (now - lastKeyTimeRef.current > 120) {
+        scanBufferRef.current = '';
+      }
+      lastKeyTimeRef.current = now;
+
+      if (e.key === 'Enter') {
+        const code = scanBufferRef.current.trim();
+        scanBufferRef.current = '';
+        if (code.length >= 4) {
+          e.preventDefault();
+          void processBarcode(code);
+        }
+        return;
       }
 
-      if (!foundExact) {
-        ci = getFirstInStockColour(match);
-        if (sizeCount > 0) {
-          let firstInStockSi = 0;
-          for (let sIdx = 0; sIdx < sizeCount; sIdx++) {
-            if (getVariantStock(match, ci, sIdx) > 0) {
-              firstInStockSi = sIdx;
-              break;
-            }
-          }
-          si = firstInStockSi;
-        }
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        scanBufferRef.current += e.key;
       }
-    }
+    };
 
-    const stock = getVariantStock(match, ci, si);
-    const variantText = getVariantText(match, ci, si);
-    if (stock <= 0) {
-      notify(`${match.name} (${variantText}) is out of stock`, 'err');
-      return;
-    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [stage, processBarcode]);
 
-    addToCart({
-      key: `${match.id}-${ci ?? 'x'}-${si ?? 'x'}`,
-      itemId: match.id,
-      name: match.name,
-      variantText,
-      sku: getSku(match, ci, si),
-      colourIdx: ci,
-      sizeIdx: si,
-      price: match.price,
-      originalPrice: match.price,
-      qty: 1,
-      lineDiscount: 0,
+  const updateCartLine = (key: string, patch: Partial<FootwearCartLine>) => {
+    setCart((prev) => {
+      const next: FootwearCartLine[] = [];
+      for (const l of prev) {
+        if (l.key !== key) {
+          next.push(l);
+          continue;
+        }
+        const nextQty = patch.qty !== undefined ? patch.qty : l.qty;
+        if (nextQty <= 0) continue;
+        if (nextQty > l.availableStock) {
+          notify(`Only ${l.availableStock} pairs available for ${l.sku}`, 'warn');
+          next.push(l);
+          continue;
+        }
+        next.push({ ...l, ...patch, qty: nextQty });
+      }
+      return next;
     });
-    notify(`Scanned ${match.name}`, 'ok');
-    setBarcodeInput('');
+  };
+
+  const removeCartLine = (key: string) => {
+    setCart((prev) => prev.filter((l) => l.key !== key));
+  };
+
+  const clearBill = () => {
+    setCart([]);
+    setCustomer(null);
+    setCartDiscount(null);
+    setActiveHeldBillId(null);
+    setClientSyncId(generateSyncId());
+    setCheckoutError(null);
+  };
+
+  const handleHoldBill = async (note?: string) => {
+    if (cart.length === 0) return;
+    setHoldingBill(true);
+    try {
+      const res = await footwearPosService.holdBill({
+        branchId: selectedBranchId || undefined,
+        customerId: customer?.id || null,
+        cartPayload: cart.map((l) => ({
+          key: l.key,
+          productId: l.productId,
+          variantId: l.variantId,
+          name: l.name,
+          brand: l.brand,
+          variantText: l.variantText,
+          colourName: l.colourName,
+          sizeName: l.sizeName,
+          sizingSystem: l.sizingSystem,
+          sku: l.sku,
+          price: l.price,
+          originalPrice: l.originalPrice,
+          qty: l.qty,
+          lineDiscount: l.lineDiscount,
+          note: l.note,
+        })),
+        discountPayload: cartDiscount
+          ? { mode: cartDiscount.mode, value: cartDiscount.value, reason: cartDiscount.reason }
+          : null,
+        totalEstimate: total,
+        note,
+      });
+      setHeldBills((prev) => [res.heldBill, ...prev]);
+      clearBill();
+      notify(`Bill placed on hold (${res.heldBill.holdCode}) — stock untouched`, 'info');
+    } catch (e) {
+      notify(e instanceof Error ? e.message : 'Failed to hold bill', 'err');
+    } finally {
+      setHoldingBill(false);
+    }
+  };
+
+  const handleRecallHeldBill = (held: PosHeldBillRecord) => {
+    // Re-hydrate live branch stock for each variant from catalog
+    const hydrated: FootwearCartLine[] = held.cartPayload.map((item) => {
+      const product = catalog?.products.find((p) => p.id === item.productId);
+      const variant = product?.variants.find((v) => v.id === item.variantId);
+      const liveAvail = variant ? variant.availableStock : item.qty;
+      return {
+        key: item.variantId,
+        productId: item.productId,
+        variantId: item.variantId,
+        name: product?.name || item.name,
+        brand: product?.brand || item.brand,
+        artId: product?.artId || 'sneaker',
+        imageUrl: product?.primaryImageUrl || null,
+        variantText: item.variantText,
+        colourName: item.colourName,
+        sizeName: item.sizeName,
+        sizingSystem: item.sizingSystem,
+        sku: variant?.sku || item.sku,
+        barcode: variant?.primaryBarcode || null,
+        price: variant ? variant.sellingPrice : item.price,
+        originalPrice: variant ? variant.sellingPrice : item.originalPrice,
+        qty: Math.min(item.qty, Math.max(1, liveAvail)),
+        availableStock: liveAvail,
+        lineDiscount: item.lineDiscount || 0,
+        note: item.note,
+      };
+    });
+
+    setCart(hydrated);
+    setCartDiscount(held.discountPayload || null);
+    setActiveHeldBillId(held.id);
+    if (held.customerId && held.customerName) {
+      setCustomer({
+        id: held.customerId,
+        fullName: held.customerName,
+        phone: null,
+        city: null,
+        address: null,
+        khataBalance: 0,
+        refundOwed: 0,
+        notes: null,
+      });
+    } else {
+      setCustomer(null);
+    }
+    setClientSyncId(generateSyncId());
+    notify(`Resumed ${held.holdCode}`, 'ok');
+  };
+
+  const handleDeleteHeldBill = async (id: string) => {
+    try {
+      await footwearPosService.deleteHeldBill(id, selectedBranchId || undefined);
+      setHeldBills((prev) => prev.filter((h) => h.id !== id));
+      if (activeHeldBillId === id) setActiveHeldBillId(null);
+      notify('Held bill removed', 'info');
+    } catch (e) {
+      notify(e instanceof Error ? e.message : 'Failed to remove held bill', 'err');
+    }
+  };
+
+  const handleCheckout = async (params: {
+    payments: CheckoutPaymentEntry[];
+    allowPartialKhata?: boolean;
+    notes?: string;
+  }) => {
+    if (submittingSale || cart.length === 0) return;
+    setSubmittingSale(true);
+    setCheckoutError(null);
+    try {
+      const res = await footwearPosService.checkout({
+        branchId: selectedBranchId || undefined,
+        customerId: customer?.id || null,
+        clientSyncId,
+        discountPayload: cartDiscount
+          ? { mode: cartDiscount.mode, value: cartDiscount.value, reason: cartDiscount.reason }
+          : null,
+        notes: params.notes,
+        heldBillId: activeHeldBillId,
+        allowPartialKhata: params.allowPartialKhata,
+        items: cart.map((l) => ({
+          variantId: l.variantId,
+          quantity: l.qty,
+          unitPrice: l.price,
+          lineDiscountAmount: l.lineDiscount,
+          note: l.note,
+        })),
+        payments: params.payments,
+      });
+      setCompletedSale(res.sale);
+      setStage('complete');
+      clearBill();
+      notify(`Bill #${res.sale.billNumber} completed & stock updated`, 'ok');
+      // Refresh catalog stock + held bills in background
+      void loadWorkspaceData(selectedBranchId || undefined);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Checkout failed';
+      setCheckoutError(msg);
+      notify(msg, 'err');
+    } finally {
+      setSubmittingSale(false);
+    }
   };
 
   if (stage === 'tender') {
@@ -250,32 +486,36 @@ export function PosRegisterWorkspace() {
           discountAmt={discountAmt}
           total={total}
           itemCount={itemCount}
-          billNo={state.nextBillNo}
           customer={customer}
-          onBack={() => setStage('register')}
-          onNeedCustomer={() => setCustomerOpen(true)}
-          onComplete={({ pay, recv, splits }) => {
-            const bill = completeSale({ pay, recv, splits, discountAmt });
-            setCompletedBill(bill);
-            setStage('complete');
+          submitting={submittingSale}
+          errorMessage={checkoutError}
+          onBack={() => {
+            setCheckoutError(null);
+            setStage('register');
           }}
+          onNeedCustomer={() => setCustomerOpen(true)}
+          onComplete={handleCheckout}
         />
-        <CustomerSelector
+        <LiveCustomerSelector
           open={customerOpen}
           onClose={() => setCustomerOpen(false)}
-          currentId={state.cartCustomerId}
-          onPick={(c) => setCartCustomer(c?.id || null)}
+          branchId={selectedBranchId || undefined}
+          currentId={customer?.id || null}
+          onPick={(c) => setCustomer(c)}
         />
       </>
     );
   }
 
-  if (stage === 'complete' && completedBill) {
+  if (stage === 'complete' && completedSale) {
     return (
       <SaleCompleteScreen
-        bill={completedBill}
+        sale={completedSale}
+        shopName={catalog?.businessName || activeMembership?.businessName}
+        branchAddress={catalog?.branch.address}
+        branchPhone={catalog?.branch.phone}
         onNewSale={() => {
-          setCompletedBill(null);
+          setCompletedSale(null);
           setStage('register');
           setMobileView('catalog');
         }}
@@ -290,11 +530,13 @@ export function PosRegisterWorkspace() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="font-display font-bold text-[18px] text-[#0B2A2F]">
-              Bill #{state.nextBillNo}
+              {activeHeldBillId ? 'Resumed bill' : 'New bill'}
             </span>
-            <Badge tone="neutral">{itemCount} {t('items')}</Badge>
+            <Badge tone="neutral">
+              {itemCount} {t('items')}
+            </Badge>
           </div>
-          {state.cart.length > 0 && (
+          {cart.length > 0 && (
             <button
               type="button"
               onClick={() => setClearConfirmOpen(true)}
@@ -314,11 +556,11 @@ export function PosRegisterWorkspace() {
             <UserPlus className="w-4 h-4 text-[#08343A] shrink-0" />
             <div className="min-w-0">
               <div className="text-[13px] font-semibold text-[#0B2A2F] truncate">
-                {customer ? customer.name : t('walkIn')}
+                {customer ? customer.fullName : t('walkIn')}
               </div>
-              {customer && customer.khata > 0 && (
+              {customer && customer.khataBalance > 0 && (
                 <div className="text-[11px] text-[#8A3D12] font-semibold">
-                  Khata owes {formatRs(customer.khata)}
+                  Khata owes {formatRs(customer.khataBalance)}
                 </div>
               )}
             </div>
@@ -331,51 +573,58 @@ export function PosRegisterWorkspace() {
 
       {/* Cart lines */}
       <div className="flex-1 overflow-y-auto divide-y divide-[#F1EBE3] px-4">
-        {state.cart.length === 0 ? (
+        {cart.length === 0 ? (
           <div className="py-12 text-center space-y-2 text-[#52666A]">
             <ShoppingBag className="w-8 h-8 mx-auto opacity-50" />
             <div className="font-semibold text-[14px] text-[#0B2A2F]">Empty bill</div>
-            <div className="text-[13px]">Tap items on the left or scan a barcode to start</div>
+            <div className="text-[13px]">Tap footwear on the left or scan a box barcode to start</div>
           </div>
         ) : (
-          state.cart.map((line) => {
-            const itemObj = state.items.find((x) => x.id === line.itemId);
-            return (
-              <div key={line.key} className="py-3 flex items-center gap-3">
-                {itemObj && <ProductArtwork item={itemObj} colourIdx={line.colourIdx} size={42} />}
+          cart.map((line) => (
+            <div key={line.key} className="py-3 flex items-center gap-3">
+              <ProductArtwork
+                artId={line.artId}
+                imageUrl={line.imageUrl}
+                alt={line.name}
+                size={42}
+              />
+              <button
+                type="button"
+                onClick={() => setEditLine(line)}
+                className="flex-1 min-w-0 text-start"
+              >
+                <div className="font-semibold text-[14px] text-[#0B2A2F] truncate">{line.name}</div>
+                <div className="text-[12px] text-[#52666A] truncate">
+                  {line.variantText} · <span className="mono">{line.sku}</span>
+                </div>
+                {line.lineDiscount > 0 && (
+                  <div className="text-[11px] font-semibold text-[#14532D]">
+                    Line discount −{formatRs(line.lineDiscount)}
+                  </div>
+                )}
+              </button>
+              <div className="flex items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => setEditLine(line)}
-                  className="flex-1 min-w-0 text-start"
+                  onClick={() => updateCartLine(line.key, { qty: line.qty - 1 })}
+                  className="w-8 h-8 rounded-[8px] border border-[#D6CDC1] bg-[#FBF8F4] font-bold text-[#0B2A2F]"
                 >
-                  <div className="font-semibold text-[14px] text-[#0B2A2F] truncate">{line.name}</div>
-                  <div className="text-[12px] text-[#52666A] truncate">
-                    {line.variantText} · <span className="mono">{line.sku}</span>
-                  </div>
+                  −
                 </button>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => updateCartLine(line.key, { qty: line.qty - 1 })}
-                    className="w-8 h-8 rounded-[8px] border border-[#D6CDC1] bg-[#FBF8F4] font-bold text-[#0B2A2F]"
-                  >
-                    −
-                  </button>
-                  <span className="w-6 text-center font-bold text-[14px] num">{line.qty}</span>
-                  <button
-                    type="button"
-                    onClick={() => updateCartLine(line.key, { qty: line.qty + 1 })}
-                    className="w-8 h-8 rounded-[8px] border border-[#D6CDC1] bg-[#FBF8F4] font-bold text-[#0B2A2F]"
-                  >
-                    +
-                  </button>
-                </div>
-                <div className="w-20 text-end font-bold text-[14px] num">
-                  {formatRs(line.price * line.qty)}
-                </div>
+                <span className="w-6 text-center font-bold text-[14px] num">{line.qty}</span>
+                <button
+                  type="button"
+                  onClick={() => updateCartLine(line.key, { qty: line.qty + 1 })}
+                  className="w-8 h-8 rounded-[8px] border border-[#D6CDC1] bg-[#FBF8F4] font-bold text-[#0B2A2F]"
+                >
+                  +
+                </button>
               </div>
-            );
-          })
+              <div className="w-20 text-end font-bold text-[14px] num">
+                {formatRs(Math.max(0, line.price * line.qty - line.lineDiscount))}
+              </div>
+            </div>
+          ))
         )}
       </div>
 
@@ -387,10 +636,10 @@ export function PosRegisterWorkspace() {
             size="sm"
             className="flex-1"
             onClick={() => setDiscountOpen(true)}
-            disabled={state.cart.length === 0}
+            disabled={cart.length === 0 || !catalog?.canDiscount}
           >
             <Percent className="w-4 h-4" />
-            {state.cartDiscount ? `Discount (−${formatRs(discountAmt)})` : t('discount')}
+            {cartDiscount ? `Discount (−${formatRs(discountAmt)})` : t('discount')}
           </Button>
           <Button
             variant="secondary"
@@ -399,7 +648,7 @@ export function PosRegisterWorkspace() {
             onClick={() => setHeldOpen(true)}
           >
             <PauseCircle className="w-4 h-4" />
-            {t('heldBills')} ({state.heldBills.length})
+            {t('heldBills')} ({heldBills.length})
           </Button>
         </div>
 
@@ -409,14 +658,21 @@ export function PosRegisterWorkspace() {
           variant="primary"
           size="counter"
           fullWidth
-          disabled={state.cart.length === 0}
-          onClick={() => setStage('tender')}
+          disabled={cart.length === 0}
+          onClick={() => {
+            setCheckoutError(null);
+            setStage('tender');
+          }}
         >
           {t('pay')} · {formatRs(total)}
         </Button>
       </div>
     </div>
   );
+
+  const shopDisplayName = catalog?.businessName || activeMembership?.businessName || 'ZYRO Footwear';
+  const staffDisplayName = session.user?.fullName || 'Cashier';
+  const staffRoleName = activeMembership?.roleName || 'Counter';
 
   return (
     <div className="h-screen flex flex-col bg-[#F4EFE9] overflow-hidden">
@@ -432,23 +688,41 @@ export function PosRegisterWorkspace() {
           </Link>
           <div className="min-w-0">
             <div className="font-display font-bold text-[15px] truncate">
-              {state.session.shopName} · Register
+              {shopDisplayName} · Register
             </div>
             <div className="text-[11px] text-[#C9DADB] truncate">
-              {user.name} ({user.roleLabel})
+              {staffDisplayName} ({staffRoleName})
+              {catalog?.branch?.name ? ` · ${catalog.branch.name}` : ''}
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          {settings.offlineModeSimulated && (
-            <Badge tone="warn">
-              <WifiOff className="w-3.5 h-3.5" /> Offline
-            </Badge>
+          {catalog && catalog.branches.length > 1 && (
+            <div className="hidden sm:flex items-center gap-1.5 bg-white/10 rounded-[9px] px-2.5 py-1">
+              <Building2 className="w-3.5 h-3.5 text-[#C9DADB]" />
+              <select
+                value={selectedBranchId}
+                onChange={(e) => {
+                  setSelectedBranchId(e.target.value);
+                  clearBill();
+                }}
+                aria-label="Select branch"
+                className="bg-transparent text-white text-[12px] font-semibold focus:outline-none"
+              >
+                {catalog.branches.map((b) => (
+                  <option key={b.id} value={b.id} className="text-[#0B2A2F]">
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
+
           <div className="hidden md:block">
             <LanguageSwitcher compact />
           </div>
+
           <Dropdown
             align="end"
             trigger={
@@ -464,38 +738,26 @@ export function PosRegisterWorkspace() {
               {
                 id: 'bills',
                 label: 'Bill book',
-                icon: <Receipt className="w-4 h-4" />,
+                icon: <ReceiptIcon className="w-4 h-4" />,
                 onSelect: () => router.push('/pos/bills'),
               },
               {
                 id: 'returns',
-                label: 'Return or exchange',
+                label: 'Return from bill',
                 icon: <RotateCcw className="w-4 h-4" />,
                 onSelect: () => router.push('/pos/returns'),
               },
               {
-                id: 'quote',
-                label: 'Create quote',
-                icon: <FileText className="w-4 h-4" />,
-                onSelect: () => router.push('/pos/quotes'),
-              },
-              {
                 id: 'shoe-ex',
-                label: 'Shoe size exchange',
+                label: 'Footwear exchange',
                 icon: <RefreshCw className="w-4 h-4" />,
                 onSelect: () => router.push('/pos/exchange'),
               },
               {
-                id: 'sync',
-                label: 'Sync check',
+                id: 'stock',
+                label: 'Footwear stock',
                 icon: <BookOpen className="w-4 h-4" />,
-                onSelect: () => router.push('/pos/sync-check'),
-              },
-              {
-                id: 'close-shift',
-                label: 'Close shift',
-                icon: <PauseCircle className="w-4 h-4" />,
-                onSelect: () => router.push('/cash/close-shift'),
+                onSelect: () => router.push('/inventory'),
               },
             ]}
           />
@@ -511,20 +773,29 @@ export function PosRegisterWorkspace() {
                 <SearchInput
                   value={barcodeInput}
                   onChange={setBarcodeInput}
-                  onSubmit={handleBarcodeSubmit}
-                  placeholder="Scan barcode or SKU (e.g. TEE)"
+                  onSubmit={() => void processBarcode(barcodeInput)}
+                  placeholder="Scan barcode or SKU + Enter"
                   rightSlot={
                     <button
                       type="button"
-                      onClick={handleBarcodeSubmit}
+                      disabled={scanning}
+                      onClick={() => void processBarcode(barcodeInput)}
                       className="px-2 py-1 rounded bg-[#08343A] text-white text-[12px] font-semibold"
                     >
-                      Scan
+                      {scanning ? '...' : 'Scan'}
                     </button>
                   }
                 />
               </div>
-              <ProductSelector onSelect={handleSelectProduct} />
+              <FootwearProductSelector
+                products={catalog?.products || []}
+                categories={catalog?.categories || []}
+                brands={catalog?.facets.brands || []}
+                sizes={catalog?.facets.sizes || []}
+                colours={catalog?.facets.colours || []}
+                loading={loadingCatalog}
+                onSelect={handleSelectProduct}
+              />
             </div>
           ) : (
             <div className="flex-1 min-h-0">{cartPane}</div>
@@ -537,7 +808,7 @@ export function PosRegisterWorkspace() {
               className="flex-1"
               onClick={() => setMobileView('catalog')}
             >
-              <ScanBarcode className="w-4 h-4" /> Items
+              <ScanBarcode className="w-4 h-4" /> Footwear
             </Button>
             <Button
               variant={mobileView === 'bill' ? 'primary' : 'copperTint'}
@@ -555,16 +826,29 @@ export function PosRegisterWorkspace() {
               <SearchInput
                 value={barcodeInput}
                 onChange={setBarcodeInput}
-                onSubmit={handleBarcodeSubmit}
-                placeholder="Scan barcode or type SKU (e.g. TEE, KUR, LWN) + Enter"
+                onSubmit={() => void processBarcode(barcodeInput)}
+                placeholder="Scan box barcode (USB/BT scanner ready) or enter SKU + Enter"
                 rightSlot={
-                  <Button size="sm" variant="dark" onClick={handleBarcodeSubmit}>
-                    <ScanBarcode className="w-4 h-4" /> Scan
+                  <Button
+                    size="sm"
+                    variant="dark"
+                    disabled={scanning}
+                    onClick={() => void processBarcode(barcodeInput)}
+                  >
+                    <ScanBarcode className="w-4 h-4" /> {scanning ? 'Finding...' : 'Scan'}
                   </Button>
                 }
               />
             </div>
-            <ProductSelector onSelect={handleSelectProduct} />
+            <FootwearProductSelector
+              products={catalog?.products || []}
+              categories={catalog?.categories || []}
+              brands={catalog?.facets.brands || []}
+              sizes={catalog?.facets.sizes || []}
+              colours={catalog?.facets.colours || []}
+              loading={loadingCatalog}
+              onSelect={handleSelectProduct}
+            />
           </div>
           <div className="col-span-5 xl:col-span-4 min-h-0">{cartPane}</div>
         </div>
@@ -572,35 +856,34 @@ export function PosRegisterWorkspace() {
 
       {/* Modals & Drawers */}
       <VariantPickerModal
-        key={`variant-${variantItem?.id ?? 'none'}`}
-        item={variantItem}
-        onClose={() => setVariantItem(null)}
-        onAdd={(line) => {
-          addToCart(line);
-          notify(`Added ${line.name} (${line.variantText})`, 'ok');
-        }}
+        key={`variant-${variantProduct?.id ?? 'none'}`}
+        product={variantProduct}
+        cartQtyByVariant={cartQtyByVariant}
+        onClose={() => setVariantProduct(null)}
+        onAdd={addVariantToCart}
       />
-      <MeasuredBlockedModal
-        open={measuredBlockedOpen}
-        onClose={() => setMeasuredBlockedOpen(false)}
-      />
-      <CustomerSelector
+      <LiveCustomerSelector
         open={customerOpen}
         onClose={() => setCustomerOpen(false)}
-        currentId={state.cartCustomerId}
-        onPick={(c) => setCartCustomer(c?.id || null)}
+        branchId={selectedBranchId || undefined}
+        currentId={customer?.id || null}
+        onPick={(c) => setCustomer(c)}
       />
       <DiscountModal
         open={discountOpen}
         onClose={() => setDiscountOpen(false)}
         subtotal={subtotal}
-        current={state.cartDiscount}
+        current={cartDiscount}
+        canDiscount={catalog?.canDiscount ?? true}
+        canApproveHighDiscount={catalog?.canOverridePrice ?? false}
         onApply={setCartDiscount}
         onRemove={() => setCartDiscount(null)}
       />
       <LineEditModal
         key={`line-edit-${editLine?.key ?? 'none'}`}
         line={editLine}
+        canOverridePrice={catalog?.canOverridePrice ?? false}
+        canDiscount={catalog?.canDiscount ?? true}
         onClose={() => setEditLine(null)}
         onSave={updateCartLine}
         onRemove={removeCartLine}
@@ -608,31 +891,22 @@ export function PosRegisterWorkspace() {
       <HeldBillsDrawer
         open={heldOpen}
         onClose={() => setHeldOpen(false)}
-        heldBills={state.heldBills}
-        canHoldCurrent={state.cart.length > 0}
-        onHoldCurrent={(note) => {
-          holdCurrentBill(note);
-          notify('Bill placed on hold', 'info');
-        }}
-        onRecall={(id) => {
-          const hadCart = state.cart.length > 0;
-          recallHeldBill(id);
-          notify(
-            hadCart
-              ? 'Brought held bill back (previous cart saved to Held bills)'
-              : 'Brought held bill back to register',
-            'ok'
-          );
-        }}
+        heldBills={heldBills}
+        loading={loadingHeld}
+        canHoldCurrent={cart.length > 0}
+        holding={holdingBill}
+        onHoldCurrent={handleHoldBill}
+        onRecall={handleRecallHeldBill}
+        onDelete={handleDeleteHeldBill}
       />
       <ConfirmDialog
         open={clearConfirmOpen}
         onClose={() => setClearConfirmOpen(false)}
         onConfirm={() => {
-          clearCart();
+          clearBill();
           notify('Bill cleared', 'info');
         }}
-        title={`Clear Bill #${state.nextBillNo}?`}
+        title="Clear current bill?"
         body="All items and discounts on this unsaved bill will be removed."
         confirmLabel="Clear bill"
       />

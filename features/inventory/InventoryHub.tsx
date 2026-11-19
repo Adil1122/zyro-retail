@@ -1,19 +1,19 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
-  AlertTriangle,
   Boxes,
-  Camera,
-  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   ClipboardCheck,
   Edit3,
   FolderKanban,
+  History,
   Layers,
   Plus,
   Printer,
-  Ruler,
+  RefreshCw,
   SlidersHorizontal,
   Trash2,
 } from 'lucide-react';
@@ -33,445 +33,745 @@ import { SearchInput } from '@/components/ui/SearchInput';
 import { Select } from '@/components/ui/Select';
 import { StatCard } from '@/components/ui/StatCard';
 import { Tabs } from '@/components/ui/Tabs';
-import { CATEGORY_TINTS, SWATCHES } from '@/constants/kits';
+import { SWATCHES } from '@/constants/kits';
+import { useAuth } from '@/features/auth/hooks/useAuth';
+import {
+  footwearInventoryService,
+  type InventoryProductsResponse,
+} from '@/features/inventory/services/footwear-inventory.service';
 import { useZyro } from '@/hooks/useZyro';
 import { formatRs } from '@/lib/format';
 import {
-  getSku,
-  getStockStatusInfo,
-  getTotalStock,
-  getVariantReserved,
-  getVariantStock,
-} from '@/lib/inventory';
-import type { ProductItem } from '@/types';
+  FOOTWEAR_TYPES,
+  type FootwearProductRecord,
+  type StockMovementRecord,
+} from '@/types/footwear';
 
-const ADJUST_REASONS = [
-  'Damaged or torn',
-  'Found during shelf check',
-  'Sample or display unit',
-  'Count correction',
-  'Returned by staff',
+const ADJUSTMENT_TYPES: Array<{
+  value: 'damage' | 'shrinkage' | 'adjustment' | 'opening_stock';
+  label: string;
+  defaultReason: string;
+}> = [
+  { value: 'damage', label: 'Damaged footwear (−)', defaultReason: 'Damaged box or sole defect' },
+  { value: 'shrinkage', label: 'Lost / shrinkage (−)', defaultReason: 'Missing pair during shelf check' },
+  { value: 'adjustment', label: 'Found / manual correction (+/−)', defaultReason: 'Found during shelf check' },
+  { value: 'opening_stock', label: 'Opening / restock entry (+)', defaultReason: 'Opening stock count entry' },
 ];
 
 export function InventoryHub() {
-  const { state, role, kit, settings, saveItem, deleteItem, adjustStock, notify } = useZyro();
+  const { notify } = useZyro();
+  const { activeMembership, hasPermission } = useAuth();
+
+  const [branchId, setBranchId] = useState<string>('');
   const [query, setQuery] = useState('');
-  const [catFilter, setCatFilter] = useState<string>('all');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [brandFilter, setBrandFilter] = useState('all');
+  const [sizeFilter, setSizeFilter] = useState('all');
+  const [colourFilter, setColourFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [sortBy, setSortBy] = useState('newest');
+  const [page, setPage] = useState(1);
   const [tab, setTab] = useState<string>('all');
+
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [data, setData] = useState<InventoryProductsResponse | null>(null);
+  const [movements, setMovements] = useState<StockMovementRecord[]>([]);
+  const [movementsLoading, setMovementsLoading] = useState(false);
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedDetail, setSelectedDetail] = useState<FootwearProductRecord | null>(null);
+  const [selectedMovements, setSelectedMovements] = useState<StockMovementRecord[]>([]);
 
   // Modals inside drawer
   const [adjustOpen, setAdjustOpen] = useState(false);
+  const [adjVariantId, setAdjVariantId] = useState('');
+  const [adjType, setAdjType] = useState<'damage' | 'shrinkage' | 'adjustment' | 'opening_stock'>('damage');
   const [adjDelta, setAdjDelta] = useState('-1');
-  const [adjVariant, setAdjVariant] = useState('Main stock');
-  const [adjVariantKey, setAdjVariantKey] = useState<string | undefined>(undefined);
-  const [adjReason, setAdjReason] = useState(ADJUST_REASONS[0]);
+  const [adjReason, setAdjReason] = useState(ADJUSTMENT_TYPES[0].defaultReason);
+  const [savingAdj, setSavingAdj] = useState(false);
 
   const [priceOpen, setPriceOpen] = useState(false);
   const [newPrice, setNewPrice] = useState('');
   const [newCost, setNewCost] = useState('');
+  const [savingPrice, setSavingPrice] = useState(false);
 
-  const [tagVariantKey, setTagVariantKey] = useState<string>('0-0');
+  const [tagVariantId, setTagVariantId] = useState('');
   const [deleteOpen, setDeleteOpen] = useState(false);
 
+  const canManageStock = hasPermission('inventory.manage');
+  const canManageCategories = hasPermission('inventory.categories') || canManageStock;
+  const isOwner =
+    activeMembership?.roleName.toLowerCase() === 'owner' ||
+    hasPermission('settings.manage') ||
+    hasPermission('reports.view');
+
+  const loadProducts = useCallback(async () => {
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const stockFilterParam =
+        tab === 'low' ? 'low' : tab === 'out' ? 'out' : 'all';
+      const res = await footwearInventoryService.listProducts({
+        branchId: branchId || undefined,
+        q: query.trim() || undefined,
+        footwearType: typeFilter !== 'all' ? typeFilter : undefined,
+        brand: brandFilter !== 'all' ? brandFilter : undefined,
+        size: sizeFilter !== 'all' ? sizeFilter : undefined,
+        colour: colourFilter !== 'all' ? colourFilter : undefined,
+        status: statusFilter !== 'all' ? statusFilter : undefined,
+        stockFilter: stockFilterParam,
+        sort: sortBy,
+        page,
+        pageSize: 25,
+      });
+      setData(res);
+      if (!branchId && res.branch?.id) {
+        setBranchId(res.branch.id);
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to load footwear inventory');
+    } finally {
+      setLoading(false);
+    }
+  }, [branchId, query, typeFilter, brandFilter, sizeFilter, colourFilter, statusFilter, sortBy, page, tab]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void loadProducts();
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [loadProducts]);
+
+  // Load movements when Movements tab is selected
+  useEffect(() => {
+    if (tab !== 'movements') return;
+    setMovementsLoading(true);
+    footwearInventoryService
+      .listMovements({ branchId: branchId || undefined, limit: 80 })
+      .then((res) => setMovements(res.movements))
+      .catch((err) => notify(err instanceof Error ? err.message : 'Failed to load movements', 'err'))
+      .finally(() => setMovementsLoading(false));
+  }, [tab, branchId, notify]);
+
+  // Deep-link ?item=<id>
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const id = params.get('item');
-    if (id && state.items.some((x) => x.id === id)) {
-      setSelectedId(id);
+    if (id) setSelectedId(id);
+  }, []);
+
+  // Load full detail (multi-branch stock + movements) when drawer opens
+  useEffect(() => {
+    if (!selectedId) {
+      setSelectedDetail(null);
+      setSelectedMovements([]);
+      return;
     }
-  }, [state.items]);
-
-  const canManageStock = role === 'owner' || role === 'inventory';
-  const isOwner = role === 'owner';
-
-  const getExpiryState = (it: ProductItem): 'ok' | 'expiring' | 'expired' => {
-    if (!it.batches || it.batches.length === 0) return 'ok';
-    const now = new Date('2026-11-17');
-    let hasExpired = false;
-    let hasExpiring = false;
-    it.batches.forEach((b) => {
-      const d = new Date(b.expiry);
-      const diffDays = Math.round((d.getTime() - now.getTime()) / 86400000);
-      if (diffDays < 0) hasExpired = true;
-      else if (diffDays <= 60) hasExpiring = true;
-    });
-    if (hasExpired) return 'expired';
-    if (hasExpiring) return 'expiring';
-    return 'ok';
-  };
-
-  const hasShoeGap = (it: ProductItem) => {
-    if (!it.sizes || !it.colours) return false;
-    return it.colours.some((_, ci) =>
-      it.sizes!.some((__, si) => getVariantStock(it, ci, si) === 0)
-    );
-  };
-
-  const filtered = useMemo(() => {
-    return state.items.filter((it) => {
-      if (catFilter !== 'all' && it.cat !== catFilter) return false;
-      if (tab === 'low') {
-        if (it.measured || getTotalStock(it) > 5) return false;
-      } else if (tab === 'measured') {
-        if (!it.measured) return false;
-      } else if (tab === 'gaps') {
-        if (!hasShoeGap(it)) return false;
-      } else if (tab === 'idle') {
-        if (it.cat !== 'foot' && kit !== 'shoes') return false;
-        if (getTotalStock(it) < 12) return false;
-      } else if (tab === 'expiring') {
-        if (getExpiryState(it) !== 'expiring') return false;
-      } else if (tab === 'expired') {
-        if (getExpiryState(it) !== 'expired') return false;
-      }
-
-      if (!query.trim()) return true;
-      const q = query.trim().toLowerCase();
-      return (
-        it.name.toLowerCase().includes(q) ||
-        it.sku.toLowerCase().includes(q) ||
-        (it.barcode && it.barcode.toLowerCase().includes(q))
-      );
-    });
-  }, [state.items, catFilter, tab, query, kit]);
-
-  const selected = useMemo(
-    () => state.items.find((x) => x.id === selectedId) || null,
-    [state.items, selectedId]
-  );
-
-  const totalUnits = useMemo(
-    () => state.items.reduce((s, it) => s + getTotalStock(it), 0),
-    [state.items]
-  );
-  const lowCount = useMemo(
-    () => state.items.filter((it) => !it.measured && getTotalStock(it) <= 5).length,
-    [state.items]
-  );
-  const totalValue = useMemo(
-    () =>
-      state.items.reduce(
-        (s, it) => s + getTotalStock(it) * (it.costPrice ?? Math.round(it.price * 0.6)),
-        0
-      ),
-    [state.items]
-  );
-
-  const tabs = useMemo(() => {
-    const base: Array<{
-      id: string;
-      label: string;
-      count?: number;
-      badgeTone?: 'ok' | 'warn' | 'err' | 'neutral';
-    }> = [
-      { id: 'all', label: 'All items', count: state.items.length },
-      { id: 'low', label: 'Low or out', count: lowCount, badgeTone: lowCount > 0 ? 'warn' : 'neutral' },
-      {
-        id: 'measured',
-        label: 'Measured',
-        count: state.items.filter((i) => i.measured).length,
-      },
-    ];
-    if (kit === 'shoes') {
-      base.push({
-        id: 'gaps',
-        label: 'Size gaps',
-        count: state.items.filter(hasShoeGap).length,
-        badgeTone: 'warn',
+    let cancelled = false;
+    footwearInventoryService
+      .getProduct(selectedId, branchId || undefined)
+      .then((res) => {
+        if (cancelled) return;
+        setSelectedDetail(res.product);
+        if (res.product.variants[0]) {
+          setTagVariantId(res.product.variants[0].id);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setSelectedDetail(null);
       });
-      base.push({ id: 'idle', label: 'Slow movers' });
-    }
-    if (kit === 'pharmacy' || kit === 'cosmetics') {
-      const expSoon = state.items.filter((i) => getExpiryState(i) === 'expiring').length;
-      const expired = state.items.filter((i) => getExpiryState(i) === 'expired').length;
-      base.push({ id: 'expiring', label: 'Expiring ≤60d', count: expSoon, badgeTone: 'warn' });
-      base.push({ id: 'expired', label: 'Expired', count: expired, badgeTone: expired > 0 ? 'err' : 'neutral' });
-    }
-    return base;
-  }, [state.items, lowCount, kit]);
 
-  const getVariantOptions = (it: ProductItem | null) => {
-    if (!it || !it.colours || it.colours.length === 0) return [];
-    const opts: Array<{ value: string; label: string; rawLabel: string; code: string }> = [];
-    it.colours.forEach((col, ci) => {
-      if (it.sizes && it.sizes.length > 0) {
-        it.sizes.forEach((sz, si) => {
-          const qty = getVariantStock(it, ci, si);
-          opts.push({
-            value: `${ci}-${si}`,
-            label: `${col} · ${sz} (${qty} left)`,
-            rawLabel: `${col} · ${sz}`,
-            code: getSku(it, ci, si),
-          });
-        });
-      } else {
-        const qty = getVariantStock(it, ci, null);
-        opts.push({
-          value: `${ci}-x`,
-          label: `${col} (${qty} left)`,
-          rawLabel: col,
-          code: getSku(it, ci, null),
-        });
-      }
-    });
-    return opts;
+    footwearInventoryService
+      .listMovements({ branchId: branchId || undefined, limit: 50 })
+      .then((res) => {
+        if (cancelled) return;
+        setSelectedMovements(res.movements.filter((m) => m.productId === selectedId).slice(0, 10));
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, branchId]);
+
+  const products = useMemo(() => {
+    const list = data?.products ?? [];
+    if (tab === 'gaps') {
+      return list.filter((p) => p.outOfStockVariants > 0 && p.totalStock > 0);
+    }
+    return list;
+  }, [data?.products, tab]);
+
+  const selected = useMemo(() => {
+    if (selectedDetail && selectedDetail.id === selectedId) return selectedDetail;
+    return products.find((p) => p.id === selectedId) ?? null;
+  }, [selectedDetail, products, selectedId]);
+
+  const summary = data?.summary;
+  const branches = data?.branches ?? [];
+
+  const getStockBadge = (p: FootwearProductRecord) => {
+    if (!p.isActive) return { text: 'Inactive', tone: 'neutral' as const };
+    if (p.totalStock <= 0) return { text: 'Out of stock', tone: 'err' as const };
+    if (p.lowStockVariants > 0 || p.totalStock <= 5) {
+      return { text: `${p.totalStock} pairs · ${p.lowStockVariants} low`, tone: 'warn' as const };
+    }
+    return { text: `${p.totalStock} pairs`, tone: 'ok' as const };
   };
 
-  const selectedVariants = useMemo(() => getVariantOptions(selected), [selected]);
-
-  const openAdjustFor = (it: ProductItem) => {
-    const opts = getVariantOptions(it);
-    if (opts.length > 0) {
-      setAdjVariantKey(opts[0].value);
-      setAdjVariant(opts[0].rawLabel);
-    } else {
-      setAdjVariantKey(undefined);
-      setAdjVariant('Main stock');
-    }
+  const openAdjustFor = (p: FootwearProductRecord) => {
+    const firstVar = p.variants[0];
+    setAdjVariantId(firstVar?.id ?? '');
+    setAdjType('damage');
     setAdjDelta('-1');
-    setAdjReason(ADJUST_REASONS[0]);
+    setAdjReason(ADJUSTMENT_TYPES[0].defaultReason);
     setAdjustOpen(true);
   };
 
-  const openPriceFor = (it: ProductItem) => {
-    setNewPrice(String(it.price));
-    setNewCost(String(it.costPrice ?? Math.round(it.price * 0.6)));
+  const openPriceFor = (p: FootwearProductRecord) => {
+    setNewPrice(String(p.baseSellingPrice));
+    setNewCost(String(p.baseCostPrice));
     setPriceOpen(true);
   };
+
+  const handleSaveAdjustment = async () => {
+    if (!selected || !adjVariantId) return;
+    let delta = parseInt(adjDelta, 10);
+    if (Number.isNaN(delta) || delta === 0) {
+      notify('Enter a non-zero quantity change', 'err');
+      return;
+    }
+    if ((adjType === 'damage' || adjType === 'shrinkage') && delta > 0) {
+      delta = -Math.abs(delta);
+    }
+    if (adjType === 'opening_stock' && delta < 0) {
+      delta = Math.abs(delta);
+    }
+    setSavingAdj(true);
+    try {
+      await footwearInventoryService.adjustStock({
+        branchId: branchId || undefined,
+        variantId: adjVariantId,
+        quantityDelta: delta,
+        movementType: adjType,
+        reason: adjReason.trim() || 'Manual footwear stock adjustment',
+      });
+      notify(`Adjusted ${selected.name} (${delta > 0 ? `+${delta}` : delta} pair)`, 'ok');
+      setAdjustOpen(false);
+      await loadProducts();
+      const refreshed = await footwearInventoryService.getProduct(selected.id, branchId || undefined);
+      setSelectedDetail(refreshed.product);
+      const movs = await footwearInventoryService.listMovements({ branchId: branchId || undefined, limit: 50 });
+      setSelectedMovements(movs.movements.filter((m) => m.productId === selected.id).slice(0, 10));
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Stock adjustment failed', 'err');
+    } finally {
+      setSavingAdj(false);
+    }
+  };
+
+  const handleSavePrice = async () => {
+    if (!selected) return;
+    const p = Number(newPrice);
+    const c = Number(newCost);
+    if (!Number.isFinite(p) || p <= 0) {
+      notify('Enter a valid selling price', 'err');
+      return;
+    }
+    setSavingPrice(true);
+    try {
+      const updated = await footwearInventoryService.updateProduct(selected.id, {
+        branchId: branchId || undefined,
+        baseSellingPrice: p,
+        baseCostPrice: Number.isFinite(c) && c >= 0 ? c : selected.baseCostPrice,
+        variants: selected.variants.map((v) => ({
+          id: v.id,
+          colourName: v.colourName,
+          sizeName: v.sizeName,
+          sizingSystem: v.sizingSystem,
+          sku: v.sku,
+          barcode: v.primaryBarcode || undefined,
+          costPrice: Number.isFinite(c) && c >= 0 ? c : v.costPrice,
+          sellingPrice: p,
+          reorderLevel: v.reorderLevel,
+          isActive: v.isActive,
+        })),
+      });
+      setSelectedDetail(updated.product);
+      notify(`Updated pricing for ${selected.name} to ${formatRs(p)}`, 'ok');
+      setPriceOpen(false);
+      await loadProducts();
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Price update failed', 'err');
+    } finally {
+      setSavingPrice(false);
+    }
+  };
+
+  const handleDeleteProduct = async () => {
+    if (!selected) return;
+    try {
+      await footwearInventoryService.deleteProduct(selected.id, branchId || undefined);
+      notify(`Archived ${selected.name} from active footwear catalog`, 'info');
+      setSelectedId(null);
+      setSelectedDetail(null);
+      setDeleteOpen(false);
+      await loadProducts();
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Failed to archive product', 'err');
+    }
+  };
+
+  const handlePrintTag = () => {
+    window.print();
+  };
+
+  const groupedByColour = useMemo(() => {
+    if (!selected) return [];
+    const map = new Map<string, FootwearProductRecord['variants']>();
+    for (const v of selected.variants) {
+      const list = map.get(v.colourName) ?? [];
+      list.push(v);
+      map.set(v.colourName, list);
+    }
+    return Array.from(map.entries());
+  }, [selected]);
 
   return (
     <div className="space-y-5">
       <PageHeader
-        eyebrow={canManageStock ? 'Stock room & catalog' : 'Cashier stock lookup'}
-        title="Stock & items"
+        eyebrow={canManageStock ? 'Footwear stock room & catalog' : 'Cashier footwear stock lookup'}
+        title="Stock & footwear"
         subtitle={
           canManageStock
-            ? 'Track quantities by colour and size, adjust damaged units, and print shelf barcodes.'
-            : 'Read-only lookup to check sizes, colours, and prices at the counter.'
+            ? 'Track footwear pairs by size (EU/UK/US) and colour across branches, adjust stock, and print barcodes.'
+            : 'Read-only lookup to check footwear sizes, colours, barcodes, and branch stock.'
         }
         actions={
-          canManageStock ? (
-            <div className="flex flex-wrap items-center gap-2">
-              {isOwner && (
-                <Link href="/inventory/categories">
+          <div className="flex flex-wrap items-center gap-2">
+            {branches.length > 1 && (
+              <div className="w-[180px]">
+                <Select
+                  value={branchId}
+                  onChange={(e) => {
+                    setBranchId(e.target.value);
+                    setPage(1);
+                  }}
+                  options={branches.map((b) => ({
+                    value: b.id,
+                    label: b.city ? `${b.name} (${b.city})` : b.name,
+                  }))}
+                />
+              </div>
+            )}
+            <Button variant="secondary" size="sm" onClick={() => void loadProducts()} title="Refresh live stock">
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            </Button>
+            {canManageStock ? (
+              <>
+                {canManageCategories && (
+                  <Link href="/inventory/categories">
+                    <Button variant="secondary" size="lg">
+                      <FolderKanban className="w-4 h-4" /> Categories
+                    </Button>
+                  </Link>
+                )}
+                <Link href="/inventory/count">
                   <Button variant="secondary" size="lg">
-                    <FolderKanban className="w-4 h-4" /> Categories
+                    <ClipboardCheck className="w-4 h-4" /> Count stock
                   </Button>
                 </Link>
-              )}
-              <Link href="/inventory/count">
-                <Button variant="secondary" size="lg">
-                  <ClipboardCheck className="w-4 h-4" /> Count stock
-                </Button>
-              </Link>
-              <Link href="/inventory/measured">
-                <Button variant="secondary" size="lg">
-                  <Ruler className="w-4 h-4" /> Measured
-                </Button>
-              </Link>
-              <Link href="/inventory/photos">
-                <Button variant="secondary" size="lg">
-                  <Camera className="w-4 h-4" /> Photos
-                </Button>
-              </Link>
-              <Link href="/inventory/items/new">
-                <Button variant="dark" size="lg">
-                  <Plus className="w-4 h-4" /> Add item
-                </Button>
-              </Link>
-            </div>
-          ) : (
-            <Badge tone="neutral">View only · Ask Stockkeeper to adjust</Badge>
-          )
+                <Link href="/inventory/items/new">
+                  <Button variant="dark" size="lg">
+                    <Plus className="w-4 h-4" /> Add footwear
+                  </Button>
+                </Link>
+              </>
+            ) : (
+              <Badge tone="neutral">View only · Ask Stockkeeper to adjust</Badge>
+            )}
+          </div>
         }
       />
 
       {/* Summary metrics */}
       <div className={`grid grid-cols-1 sm:grid-cols-2 ${isOwner ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-4`}>
-        <StatCard label="Active SKUs" value={state.items.length} sub={`${state.categories.length} categories`} icon={<Boxes className="w-4 h-4" />} />
-        <StatCard label="Total units on shelf" value={totalUnits} sub="Excludes measured rolls" icon={<Layers className="w-4 h-4" />} />
+        <StatCard
+          label="Footwear products"
+          value={summary?.totalProducts ?? 0}
+          sub={`${summary?.totalVariants ?? 0} size/colour variants`}
+          icon={<Boxes className="w-4 h-4" />}
+        />
+        <StatCard
+          label="Pairs on shelf"
+          value={summary?.totalPairsOnHand ?? 0}
+          sub={data?.branch?.name ? `Branch: ${data.branch.name}` : 'Active branch'}
+          icon={<Layers className="w-4 h-4" />}
+        />
         <StatCard
           label="Low or out of stock"
-          value={lowCount}
-          tone={lowCount > 0 ? 'warn' : 'ok'}
-          sub="≤ 5 units left across variants"
-          onClick={() => setTab('low')}
+          value={(summary?.lowStockCount ?? 0) + (summary?.outOfStockCount ?? 0)}
+          tone={(summary?.outOfStockCount ?? 0) > 0 ? 'err' : (summary?.lowStockCount ?? 0) > 0 ? 'warn' : 'ok'}
+          sub={`${summary?.lowStockCount ?? 0} low · ${summary?.outOfStockCount ?? 0} out`}
+          onClick={() => {
+            setTab('low');
+            setPage(1);
+          }}
         />
         {isOwner && (
           <StatCard
             label="Stock value (at cost)"
-            value={formatRs(totalValue)}
-            sub="Owner-only cost valuation"
+            value={formatRs(Math.round(summary?.costValuation ?? 0))}
+            sub={`Retail value ${formatRs(Math.round(summary?.retailValuation ?? 0))}`}
           />
         )}
       </div>
 
-      {settings.offlineModeSimulated && (
-        <div className="p-3.5 rounded-[12px] bg-[#FFF3C4] border border-[#EBD892] flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 text-[13px] text-[#6B4E00] font-medium">
-            <AlertTriangle className="w-4 h-4 shrink-0" />
-            <span>Offline mode active — stock edits queue locally until reconnected.</span>
-          </div>
-          <Link href="/pos/sync-check">
-            <Button size="sm" variant="secondary">Sync check</Button>
-          </Link>
+      {errorMsg && (
+        <div className="p-3.5 rounded-[12px] bg-[#FDF0EF] border border-[#F0C8C3] text-[13px] text-[#B42318] font-medium">
+          {errorMsg}
         </div>
       )}
 
-      {/* Filters & Tabs */}
+      {/* Tabs & Filters */}
       <div className="space-y-3">
-        <Tabs activeId={tab} onChange={setTab} tabs={tabs} />
-        <div className="flex flex-col sm:flex-row gap-3">
-          <div className="flex-1">
-            <SearchInput
-              value={query}
-              onChange={setQuery}
-              placeholder="Search item name, SKU, or barcode..."
-            />
-          </div>
-          <div className="w-full sm:w-[220px]">
+        <Tabs
+          activeId={tab}
+          onChange={(id) => {
+            setTab(id);
+            setPage(1);
+          }}
+          tabs={[
+            { id: 'all', label: 'All footwear', count: summary?.totalProducts ?? 0 },
+            {
+              id: 'low',
+              label: 'Low stock',
+              count: summary?.lowStockCount ?? 0,
+              badgeTone: (summary?.lowStockCount ?? 0) > 0 ? 'warn' : 'neutral',
+            },
+            {
+              id: 'out',
+              label: 'Out of stock',
+              count: summary?.outOfStockCount ?? 0,
+              badgeTone: (summary?.outOfStockCount ?? 0) > 0 ? 'err' : 'neutral',
+            },
+            { id: 'gaps', label: 'Size gaps' },
+            { id: 'movements', label: 'Stock movements' },
+          ]}
+        />
+
+        {tab !== 'movements' && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5">
+            <div className="sm:col-span-2">
+              <SearchInput
+                value={query}
+                onChange={(v) => {
+                  setQuery(v);
+                  setPage(1);
+                }}
+                placeholder="Search footwear, brand, model, SKU, or barcode..."
+              />
+            </div>
             <Select
-              value={catFilter}
-              onChange={(e) => setCatFilter(e.target.value)}
+              value={typeFilter}
+              onChange={(e) => {
+                setTypeFilter(e.target.value);
+                setPage(1);
+              }}
               options={[
-                { value: 'all', label: 'All categories' },
-                ...state.categories.map((c) => ({ value: c.id, label: c.label })),
+                { value: 'all', label: 'All footwear types' },
+                ...FOOTWEAR_TYPES.map((t) => ({ value: t, label: t })),
               ]}
             />
+            <Select
+              value={brandFilter}
+              onChange={(e) => {
+                setBrandFilter(e.target.value);
+                setPage(1);
+              }}
+              options={[
+                { value: 'all', label: 'All brands' },
+                ...(data?.facets.brands ?? []).map((b) => ({ value: b, label: b })),
+              ]}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <Select
+                value={sizeFilter}
+                onChange={(e) => {
+                  setSizeFilter(e.target.value);
+                  setPage(1);
+                }}
+                options={[
+                  { value: 'all', label: 'All sizes' },
+                  ...(data?.facets.sizes ?? []).map((s) => ({ value: s, label: s })),
+                ]}
+              />
+              <Select
+                value={colourFilter}
+                onChange={(e) => {
+                  setColourFilter(e.target.value);
+                  setPage(1);
+                }}
+                options={[
+                  { value: 'all', label: 'All colours' },
+                  ...(data?.facets.colours ?? []).map((c) => ({ value: c, label: c })),
+                ]}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Select
+                value={statusFilter}
+                onChange={(e) => {
+                  setStatusFilter(e.target.value);
+                  setPage(1);
+                }}
+                options={[
+                  { value: 'all', label: 'All status' },
+                  { value: 'active', label: 'Active' },
+                  { value: 'inactive', label: 'Inactive' },
+                ]}
+              />
+              <Select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                options={[
+                  { value: 'newest', label: 'Newest' },
+                  { value: 'name_asc', label: 'Name A–Z' },
+                  { value: 'price_asc', label: 'Price low–high' },
+                  { value: 'price_desc', label: 'Price high–low' },
+                  { value: 'stock_asc', label: 'Stock low–high' },
+                  { value: 'stock_desc', label: 'Stock high–low' },
+                ]}
+              />
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      {/* Inventory table */}
-      <DataTable<ProductItem>
-        rows={filtered}
-        rowKey={(it) => it.id}
-        onRowClick={(it) => setSelectedId(it.id)}
-        emptyState={
-          <EmptyState
-            title="No matching items"
-            body="Clear the search filter or add a new item to your catalog."
-            action={
-              canManageStock && (
-                <Link href="/inventory/items/new">
-                  <Button variant="primary">Add item</Button>
-                </Link>
-              )
-            }
-          />
-        }
-        columns={[
-          {
-            key: 'item',
-            header: 'Item',
-            render: (it) => (
-              <div className="flex items-center gap-3 min-w-[200px]">
-                <ProductArtwork item={it} size={42} />
-                <div className="min-w-0">
-                  <div className="font-semibold text-[#0B2A2F] truncate">{it.name}</div>
-                  <div className="text-[12px] text-[#52666A] mono">{it.sku}</div>
-                </div>
-              </div>
-            ),
-          },
-          {
-            key: 'cat',
-            header: 'Category',
-            render: (it) => {
-              const cat = state.categories.find((c) => c.id === it.cat);
-              const tint = CATEGORY_TINTS[it.cat];
-              return (
-                <span
-                  style={tint ? { backgroundColor: tint.bg, color: tint.fg } : undefined}
-                  className="inline-flex px-2.5 py-0.5 rounded-full text-[12px] font-semibold bg-[#EAE3D9] text-[#3D5357]"
-                >
-                  {cat?.label || it.cat}
+      {/* Main Content: Products Table OR Stock Movements Ledger */}
+      {tab === 'movements' ? (
+        <DataTable<StockMovementRecord>
+          rows={movements}
+          rowKey={(m) => m.id}
+          emptyState={
+            <EmptyState
+              title={movementsLoading ? 'Loading stock ledger...' : 'No stock movements yet'}
+              body="Opening stock, POS sales, returns, exchanges, adjustments, and counts appear here automatically."
+            />
+          }
+          columns={[
+            {
+              key: 'when',
+              header: 'Date & time',
+              render: (m) => (
+                <span className="text-[12px] text-[#52666A] num">
+                  {new Date(m.createdAt).toLocaleString()}
                 </span>
-              );
+              ),
             },
-          },
-          {
-            key: 'variants',
-            header: 'Variants / Spec',
-            render: (it) => (
-              <div className="text-[13px] text-[#52666A]">
-                {it.colours
-                  ? `${it.colours.length} colours${it.sizes ? ` · ${it.sizes.length} sizes` : ''}`
-                  : it.batches
-                    ? `${it.batches.length} batches`
-                    : it.serials
-                      ? `${it.serials.length} IMEIs`
-                      : it.measured
-                        ? 'Measured by metre'
-                        : 'Single SKU'}
-              </div>
-            ),
-          },
-          {
-            key: 'stock',
-            header: 'Stock',
-            render: (it) => {
-              const st = getStockStatusInfo(it);
-              const exp = getExpiryState(it);
-              return (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <Badge tone={st.kind === 'ok' ? 'ok' : st.kind === 'warn' ? 'warn' : 'err'}>
-                    {st.text}
-                  </Badge>
-                  {exp === 'expiring' && <Badge tone="warn">Expiring soon</Badge>}
-                  {exp === 'expired' && <Badge tone="err">Expired</Badge>}
+            {
+              key: 'item',
+              header: 'Footwear variant',
+              render: (m) => (
+                <div>
+                  <div className="font-semibold text-[#0B2A2F]">{m.productName}</div>
+                  <div className="text-[12px] text-[#52666A]">
+                    {m.variantLabel} · <span className="mono">{m.sku}</span>
+                  </div>
                 </div>
-              );
+              ),
             },
-          },
-          ...(isOwner
-            ? [
-                {
-                  key: 'cost',
-                  header: 'Cost',
-                  align: 'end' as const,
-                  render: (it: ProductItem) => (
-                    <span className="num text-[#52666A]">
-                      {formatRs(it.costPrice ?? Math.round(it.price * 0.6))}
-                    </span>
-                  ),
+            {
+              key: 'type',
+              header: 'Movement',
+              render: (m) => (
+                <Badge
+                  tone={
+                    m.quantityDelta > 0
+                      ? 'ok'
+                      : m.movementType === 'damage' || m.movementType === 'shrinkage'
+                        ? 'err'
+                        : 'neutral'
+                  }
+                >
+                  {m.movementType.replace(/_/g, ' ')}
+                </Badge>
+              ),
+            },
+            {
+              key: 'reason',
+              header: 'Reason / Reference',
+              render: (m) => (
+                <div className="text-[13px] text-[#3D5357]">
+                  <div>{m.reason || '—'}</div>
+                  <div className="text-[11px] text-[#52666A]">By {m.performedByName}</div>
+                </div>
+              ),
+            },
+            {
+              key: 'delta',
+              header: 'Change',
+              align: 'end',
+              render: (m) => (
+                <span
+                  className={`font-bold num ${
+                    m.quantityDelta >= 0 ? 'text-[#14532D]' : 'text-[#B42318]'
+                  }`}
+                >
+                  {m.quantityDelta >= 0 ? `+${m.quantityDelta}` : m.quantityDelta} pair
+                </span>
+              ),
+            },
+          ]}
+        />
+      ) : (
+        <>
+          <DataTable<FootwearProductRecord>
+            rows={products}
+            rowKey={(p) => p.id}
+            onRowClick={(p) => setSelectedId(p.id)}
+            emptyState={
+              <EmptyState
+                title={loading ? 'Loading footwear inventory...' : 'No footwear items found'}
+                body={
+                  loading
+                    ? 'Fetching live catalog and branch stock from Supabase...'
+                    : 'Clear filters or add your first footwear product with sizes and colours.'
+                }
+                action={
+                  !loading && canManageStock ? (
+                    <Link href="/inventory/items/new">
+                      <Button variant="primary">Add footwear</Button>
+                    </Link>
+                  ) : undefined
+                }
+              />
+            }
+            columns={[
+              {
+                key: 'item',
+                header: 'Footwear',
+                render: (p) => (
+                  <div className="flex items-center gap-3 min-w-[220px]">
+                    <ProductArtwork
+                      artId={p.artId}
+                      colourName={p.colours[0]}
+                      imageUrl={p.primaryImageUrl}
+                      alt={p.name}
+                      size={42}
+                    />
+                    <div className="min-w-0">
+                      <div className="font-semibold text-[#0B2A2F] truncate">{p.name}</div>
+                      <div className="text-[12px] text-[#52666A] truncate">
+                        {[p.brand, p.model, p.gender].filter(Boolean).join(' · ') || p.sku}{' '}
+                        <span className="mono text-[11px]">({p.sku})</span>
+                      </div>
+                    </div>
+                  </div>
+                ),
+              },
+              {
+                key: 'type',
+                header: 'Type',
+                render: (p) => (
+                  <span className="inline-flex px-2.5 py-0.5 rounded-full text-[12px] font-semibold bg-[#F1E6D6] text-[#6B4A1E]">
+                    {p.footwearType}
+                  </span>
+                ),
+              },
+              {
+                key: 'variants',
+                header: 'Sizes & colours',
+                render: (p) => (
+                  <div className="text-[13px] text-[#52666A]">
+                    <div>
+                      {p.colours.length} colour{p.colours.length === 1 ? '' : 's'} · {p.sizes.length} size
+                      {p.sizes.length === 1 ? '' : 's'} ({p.sizingSystem})
+                    </div>
+                    <div className="text-[11px] text-[#5F7174] truncate max-w-[200px]">
+                      {p.sizes.slice(0, 6).join(', ')}
+                      {p.sizes.length > 6 ? '…' : ''}
+                    </div>
+                  </div>
+                ),
+              },
+              {
+                key: 'stock',
+                header: 'Branch stock',
+                render: (p) => {
+                  const st = getStockBadge(p);
+                  return <Badge tone={st.tone}>{st.text}</Badge>;
                 },
-              ]
-            : []),
-          {
-            key: 'price',
-            header: 'Price',
-            align: 'end',
-            render: (it) => (
-              <span className="font-bold num">
-                {formatRs(it.price)}
-                {it.unit ? <span className="text-[11px] font-normal text-[#52666A]"> {it.unit}</span> : null}
-              </span>
-            ),
-          },
-        ]}
-      />
+              },
+              ...(isOwner
+                ? [
+                    {
+                      key: 'cost',
+                      header: 'Cost',
+                      align: 'end' as const,
+                      render: (p: FootwearProductRecord) => (
+                        <span className="num text-[#52666A]">{formatRs(p.baseCostPrice)}</span>
+                      ),
+                    },
+                  ]
+                : []),
+              {
+                key: 'price',
+                header: 'Selling price',
+                align: 'end',
+                render: (p) => (
+                  <span className="font-bold num">
+                    {formatRs(p.baseSellingPrice)}
+                    <span className="text-[11px] font-normal text-[#52666A]"> / pair</span>
+                  </span>
+                ),
+              },
+            ]}
+          />
 
-      {/* Stock Detail Drawer */}
+          {/* Pagination */}
+          {data && data.totalPages > 1 && (
+            <div className="flex items-center justify-between text-[13px] text-[#52666A]">
+              <span>
+                Showing page {data.page} of {data.totalPages} ({data.total} footwear products)
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  <ChevronLeft className="w-4 h-4" /> Prev
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={page >= data.totalPages}
+                  onClick={() => setPage((p) => p + 1)}
+                >
+                  Next <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Footwear Detail Drawer */}
       <Drawer
         open={!!selected}
         onClose={() => setSelectedId(null)}
         title={selected?.name || ''}
-        subtitle={selected ? `SKU ${selected.sku} · Selling price ${formatRs(selected.price)}` : ''}
+        subtitle={
+          selected
+            ? `${selected.brand ? `${selected.brand} · ` : ''}SKU ${selected.sku} · ${formatRs(selected.baseSellingPrice)} / pair`
+            : ''
+        }
         badge={
           selected ? (
-            <Badge
-              tone={
-                getStockStatusInfo(selected).kind === 'ok'
-                  ? 'ok'
-                  : getStockStatusInfo(selected).kind === 'warn'
-                    ? 'warn'
-                    : 'err'
-              }
-            >
-              {getStockStatusInfo(selected).text}
-            </Badge>
+            <Badge tone={getStockBadge(selected).tone}>{getStockBadge(selected).text}</Badge>
           ) : undefined
         }
         footer={
@@ -487,13 +787,13 @@ export function InventoryHub() {
                 </Button>
               )}
               <Link href={`/inventory/items/${selected.id}`}>
-                <Button variant="primary">Edit item</Button>
+                <Button variant="primary">Edit footwear</Button>
               </Link>
               {isOwner && (
                 <Button
                   variant="ghost"
                   onClick={() => setDeleteOpen(true)}
-                  aria-label={`Delete ${selected.name}`}
+                  aria-label={`Archive ${selected.name}`}
                 >
                   <Trash2 className="w-4 h-4 text-[#B42318]" />
                 </Button>
@@ -504,212 +804,158 @@ export function InventoryHub() {
       >
         {selected && (
           <div className="space-y-5">
-            <div className="flex items-center gap-4 p-3.5 rounded-[12px] bg-[#FBF8F4] border border-[#E7E0D7]">
-              <ProductArtwork item={selected} size={64} />
-              <div className="space-y-1">
-                <div className="text-[13px] text-[#52666A]">
-                  Category: <strong className="text-[#0B2A2F]">{selected.cat}</strong>
+            <div className="flex items-start gap-4 p-3.5 rounded-[12px] bg-[#FBF8F4] border border-[#E7E0D7]">
+              <ProductArtwork
+                artId={selected.artId}
+                colourName={selected.colours[0]}
+                imageUrl={selected.primaryImageUrl}
+                alt={selected.name}
+                size={68}
+              />
+              <div className="space-y-1 text-[13px] text-[#52666A] flex-1">
+                <div>
+                  Type: <strong className="text-[#0B2A2F]">{selected.footwearType}</strong>
+                  {selected.gender ? ` · ${selected.gender}` : ''}
+                  {` · ${selected.sizingSystem} sizing`}
                 </div>
-                {isOwner && (
-                  <div className="text-[13px] text-[#52666A]">
-                    Cost price:{' '}
-                    <strong className="text-[#0B2A2F] num">
-                      {formatRs(selected.costPrice ?? Math.round(selected.price * 0.6))}
+                {(selected.brand || selected.model) && (
+                  <div>
+                    Brand / Model:{' '}
+                    <strong className="text-[#0B2A2F]">
+                      {[selected.brand, selected.model].filter(Boolean).join(' — ')}
                     </strong>
                   </div>
                 )}
-                {selected.karat && (
-                  <div className="text-[12px] text-[#52666A]">
-                    Karat {selected.karat} · {selected.weightGrams}g · Making {formatRs(selected.makingCharge || 0)}
+                {(selected.material || selected.upperMaterial || selected.soleMaterial) && (
+                  <div className="text-[12px]">
+                    {[
+                      selected.material ? `Material: ${selected.material}` : null,
+                      selected.upperMaterial ? `Upper: ${selected.upperMaterial}` : null,
+                      selected.soleMaterial ? `Sole: ${selected.soleMaterial}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
                   </div>
+                )}
+                {isOwner && (
+                  <div>
+                    Cost: <strong className="text-[#0B2A2F] num">{formatRs(selected.baseCostPrice)}</strong>
+                    {' · '}Retail: <strong className="text-[#0B2A2F] num">{formatRs(selected.baseSellingPrice)}</strong>
+                  </div>
+                )}
+                {selected.description && (
+                  <p className="text-[12px] text-[#3D5357] pt-1">{selected.description}</p>
                 )}
               </div>
             </div>
 
-            {selected.measured && (
-              <div className="p-3.5 rounded-[12px] bg-[#FFF3C4] border border-[#EBD892] space-y-2">
-                <div className="font-semibold text-[13px] text-[#6B4E00]">
-                  Measured item — locked from fast counter scanning
-                </div>
-                <p className="text-[12px] text-[#6B4E00]">
-                  Fabric and loose items sold by metre or kg are verified from the Measured Items desk.
-                </p>
-                <Link href="/inventory/measured">
-                  <Button size="sm" variant="secondary">Open Measured Desk</Button>
-                </Link>
-              </div>
-            )}
-
-            {/* Variant breakdown */}
-            {selected.colours && selected.colours.length > 0 && (
-              <div className="space-y-3">
-                <h3 className="text-[13px] font-semibold uppercase tracking-wider text-[#52666A]">
-                  Stock by colour &amp; size
-                </h3>
-                {selected.colours.map((col, ci) => (
-                  <Card key={col} padding="sm" className="space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="w-3.5 h-3.5 rounded-full border border-black/20"
-                          style={{ backgroundColor: SWATCHES[col] || '#8C918E' }}
-                        />
-                        <span className="font-semibold text-[14px] text-[#0B2A2F]">{col}</span>
-                      </div>
-                      <span className="text-[12px] text-[#52666A] mono">
-                        {getSku(selected, ci, null)}
-                      </span>
+            {/* Variant breakdown by colour & size */}
+            <div className="space-y-3">
+              <h3 className="text-[13px] font-semibold uppercase tracking-wider text-[#52666A]">
+                Stock by colour &amp; size ({data?.branch?.name || 'Active branch'})
+              </h3>
+              {groupedByColour.map(([colour, list]) => (
+                <Card key={colour} padding="sm" className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="w-3.5 h-3.5 rounded-full border border-black/20"
+                        style={{ backgroundColor: SWATCHES[colour] || '#8C918E' }}
+                      />
+                      <span className="font-semibold text-[14px] text-[#0B2A2F]">{colour}</span>
                     </div>
-                    {selected.sizes && selected.sizes.length > 0 ? (
-                      <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
-                        {selected.sizes.map((sz, si) => {
-                          const qty = getVariantStock(selected, ci, si);
-                          const res = getVariantReserved(selected, ci, si);
-                          return (
-                            <div
-                              key={sz}
-                              className={`p-2 rounded-[8px] border text-center ${
-                                qty === 0
-                                  ? 'bg-[#FDF0EF] border-[#F0C8C3] text-[#B42318]'
-                                  : qty <= 2
-                                    ? 'bg-[#FFF9E6] border-[#EBD892] text-[#6B4E00]'
-                                    : 'bg-[#FBF8F4] border-[#E7E0D7] text-[#0B2A2F]'
-                              }`}
-                            >
-                              <div className="text-[11px] font-semibold">{sz}</div>
-                              <div className="text-[14px] font-bold num">{qty}</div>
-                              {res > 0 && (
-                                <div className="text-[10px] text-[#52666A]">{res} rsv</div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="text-[13px] text-[#0B2A2F] font-semibold num">
-                        {getVariantStock(selected, ci, null)} units in stock
-                      </div>
-                    )}
-                  </Card>
-                ))}
-              </div>
-            )}
-
-            {/* Pharmacy batches */}
-            {selected.batches && selected.batches.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="text-[13px] font-semibold uppercase tracking-wider text-[#52666A]">
-                  Batches &amp; Expiry
-                </h3>
-                {selected.batches.map((b) => (
-                  <div
-                    key={b.batchNo}
-                    className="flex items-center justify-between p-3 rounded-[10px] border border-[#E7E0D7] bg-[#FBF8F4]"
-                  >
-                    <div>
-                      <div className="font-semibold text-[13px] mono">Batch {b.batchNo}</div>
-                      <div className="text-[12px] text-[#52666A]">Expires {b.expiry}</div>
-                    </div>
-                    <Badge tone={b.qty === 0 ? 'err' : 'ok'}>{b.qty} packs</Badge>
+                    <span className="text-[12px] text-[#52666A] num">
+                      {list.reduce((s, v) => s + v.stockOnHand, 0)} pairs
+                    </span>
                   </div>
-                ))}
-              </div>
-            )}
+                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                    {list.map((v) => (
+                      <div
+                        key={v.id}
+                        className={`p-2 rounded-[8px] border text-center ${
+                          v.stockOnHand <= 0
+                            ? 'bg-[#FDF0EF] border-[#F0C8C3] text-[#B42318]'
+                            : v.stockOnHand <= Math.max(v.reorderLevel, 2)
+                              ? 'bg-[#FFF9E6] border-[#EBD892] text-[#6B4E00]'
+                              : 'bg-[#FBF8F4] border-[#E7E0D7] text-[#0B2A2F]'
+                        }`}
+                      >
+                        <div className="text-[11px] font-semibold">
+                          {v.sizingSystem} {v.sizeName || 'Std'}
+                        </div>
+                        <div className="text-[14px] font-bold num">{v.stockOnHand}</div>
+                        <div className="text-[10px] text-[#52666A] num">{formatRs(v.sellingPrice)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              ))}
+            </div>
 
-            {/* Electronics IMEIs */}
-            {selected.serials && selected.serials.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="text-[13px] font-semibold uppercase tracking-wider text-[#52666A]">
-                  Tracked Serials / IMEIs ({selected.warrantyMonths || 12}m warranty)
-                </h3>
-                <div className="space-y-1.5">
-                  {selected.serials.map((s) => (
-                    <div key={s} className="px-3 py-2 rounded-[9px] bg-[#FBF8F4] border border-[#E7E0D7] mono text-[12px] flex items-center justify-between">
-                      <span>{s}</span>
-                      <CheckCircle2 className="w-3.5 h-3.5 text-[#1E7A48]" />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Barcode label */}
-            {(() => {
-              const activeTag = selectedVariants.find((v) => v.value === tagVariantKey) || selectedVariants[0];
-              const previewCode = activeTag?.code || selected.barcode || `${selected.sku}-01`;
-              const previewLabel = activeTag ? `${selected.name} · ${activeTag.rawLabel}` : selected.name;
+            {/* Variant Barcode Label */}
+            {selected.variants.length > 0 && (() => {
+              const activeVar =
+                selected.variants.find((v) => v.id === tagVariantId) ?? selected.variants[0];
+              const code = activeVar.primaryBarcode || activeVar.sku;
               return (
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <h3 className="text-[13px] font-semibold uppercase tracking-wider text-[#52666A]">
-                      Shelf / Tag Barcode
+                      Variant Barcode Label
                     </h3>
-                    <div className="flex items-center gap-1.5">
-                      {selectedVariants.length > 1 && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() =>
-                            notify(
-                              `Queued ${selectedVariants.length} variant barcode tags for ${selected.name}`,
-                              'ok'
-                            )
-                          }
-                        >
-                          <Printer className="w-3.5 h-3.5" /> Print all ({selectedVariants.length})
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => notify(`Sent barcode tag (${previewCode}) to label printer`, 'ok')}
-                      >
-                        <Printer className="w-3.5 h-3.5" /> Print tag
-                      </Button>
-                    </div>
+                    <Button size="sm" variant="secondary" onClick={handlePrintTag}>
+                      <Printer className="w-3.5 h-3.5" /> Print barcode
+                    </Button>
                   </div>
-                  {selectedVariants.length > 0 && (
-                    <Select
-                      label="Variant tag"
-                      value={activeTag?.value || ''}
-                      onChange={(e) => setTagVariantKey(e.target.value)}
-                      options={selectedVariants.map((v) => ({ value: v.value, label: `${v.rawLabel} (${v.code})` }))}
-                    />
-                  )}
-                  <BarcodePreview
-                    code={previewCode}
-                    label={previewLabel}
-                    priceText={formatRs(selected.price)}
+                  <Select
+                    label="Select size / colour variant"
+                    value={activeVar.id}
+                    onChange={(e) => setTagVariantId(e.target.value)}
+                    options={selected.variants.map((v) => ({
+                      value: v.id,
+                      label: `${v.variantName} (${v.primaryBarcode || v.sku})`,
+                    }))}
                   />
+                  <div className="zyro-print-area">
+                    <BarcodePreview
+                      code={code}
+                      label={`${selected.name} · ${activeVar.variantName}`}
+                      priceText={formatRs(activeVar.sellingPrice)}
+                    />
+                  </div>
                 </div>
               );
             })()}
 
-            {/* Adjustment history */}
-            {state.stockAdjustments.filter((a) => a.itemId === selected.id).length > 0 && (
+            {/* Recent Stock Movements for this product */}
+            {selectedMovements.length > 0 && (
               <div className="space-y-2">
-                <h3 className="text-[13px] font-semibold uppercase tracking-wider text-[#52666A]">
-                  Recent stock adjustments
+                <h3 className="text-[13px] font-semibold uppercase tracking-wider text-[#52666A] flex items-center gap-1.5">
+                  <History className="w-3.5 h-3.5" /> Recent stock movements
                 </h3>
                 <div className="space-y-1.5">
-                  {state.stockAdjustments
-                    .filter((a) => a.itemId === selected.id)
-                    .slice(0, 5)
-                    .map((a) => (
-                      <div key={a.id} className="p-2.5 rounded-[9px] border border-[#E7E0D7] text-[12px] flex items-center justify-between">
-                        <div>
-                          <div className="font-semibold text-[#0B2A2F]">
-                            {a.variantLabel} · {a.reason}
-                          </div>
-                          <div className="text-[#52666A]">
-                            By {a.by} · {a.at}
-                          </div>
+                  {selectedMovements.map((m) => (
+                    <div
+                      key={m.id}
+                      className="p-2.5 rounded-[9px] border border-[#E7E0D7] text-[12px] flex items-center justify-between"
+                    >
+                      <div>
+                        <div className="font-semibold text-[#0B2A2F]">
+                          {m.variantLabel} · {m.movementType.replace(/_/g, ' ')}
                         </div>
-                        <span className={`font-bold num ${a.delta >= 0 ? 'text-[#14532D]' : 'text-[#B42318]'}`}>
-                          {a.delta >= 0 ? `+${a.delta}` : a.delta}
-                        </span>
+                        <div className="text-[#52666A]">
+                          {m.reason || 'Recorded movement'} · {m.performedByName}
+                        </div>
                       </div>
-                    ))}
+                      <span
+                        className={`font-bold num ${
+                          m.quantityDelta >= 0 ? 'text-[#14532D]' : 'text-[#B42318]'
+                        }`}
+                      >
+                        {m.quantityDelta >= 0 ? `+${m.quantityDelta}` : m.quantityDelta}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
@@ -722,60 +968,58 @@ export function InventoryHub() {
         open={adjustOpen && !!selected}
         onClose={() => setAdjustOpen(false)}
         title={`Adjust stock · ${selected?.name || ''}`}
-        subtitle="Record shrinkage, shelf discoveries, or physical damage."
+        subtitle="Record damaged pairs, lost inventory, found shelf stock, or manual corrections."
         footer={
           <>
-            <Button variant="secondary" onClick={() => setAdjustOpen(false)}>Cancel</Button>
-            <Button
-              variant="primary"
-              onClick={() => {
-                if (!selected) return;
-                const d = parseInt(adjDelta, 10);
-                if (Number.isNaN(d) || d === 0) {
-                  notify('Enter a non-zero quantity change', 'err');
-                  return;
-                }
-                adjustStock(selected.id, adjVariant, d, adjReason, adjVariantKey);
-                notify(`Adjusted ${selected.name} (${d > 0 ? `+${d}` : d})`, 'ok');
-                setAdjustOpen(false);
-              }}
-            >
-              Save adjustment
+            <Button variant="secondary" onClick={() => setAdjustOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" disabled={savingAdj} onClick={() => void handleSaveAdjustment()}>
+              {savingAdj ? 'Saving...' : 'Save adjustment'}
             </Button>
           </>
         }
       >
         <div className="space-y-4">
-          {selectedVariants.length > 0 ? (
+          {selected && (
             <Select
-              label="Colour / size variant"
-              value={adjVariantKey || selectedVariants[0].value}
-              onChange={(e) => {
-                const key = e.target.value;
-                setAdjVariantKey(key);
-                const opt = selectedVariants.find((v) => v.value === key);
-                if (opt) setAdjVariant(opt.rawLabel);
-              }}
-              options={selectedVariants.map((v) => ({ value: v.value, label: v.label }))}
-            />
-          ) : (
-            <Input
-              label="Variant or location"
-              value={adjVariant}
-              onChange={(e) => setAdjVariant(e.target.value)}
+              label="Size & colour variant"
+              value={adjVariantId}
+              onChange={(e) => setAdjVariantId(e.target.value)}
+              options={selected.variants.map((v) => ({
+                value: v.id,
+                label: `${v.variantName} (${v.stockOnHand} pairs on shelf)`,
+              }))}
             />
           )}
+          <Select
+            label="Adjustment type"
+            value={adjType}
+            onChange={(e) => {
+              const next = e.target.value as typeof adjType;
+              setAdjType(next);
+              const found = ADJUSTMENT_TYPES.find((t) => t.value === next);
+              if (found) setAdjReason(found.defaultReason);
+              if (next === 'damage' || next === 'shrinkage') {
+                setAdjDelta((prev) => String(-Math.abs(parseInt(prev, 10) || 1)));
+              } else if (next === 'opening_stock') {
+                setAdjDelta((prev) => String(Math.abs(parseInt(prev, 10) || 1)));
+              }
+            }}
+            options={ADJUSTMENT_TYPES.map((t) => ({ value: t.value, label: t.label }))}
+          />
           <Input
-            label="Quantity change (use − for removal, + for found)"
+            label="Quantity change (pairs)"
             type="number"
             value={adjDelta}
             onChange={(e) => setAdjDelta(e.target.value)}
+            hint="Use negative (−) to remove damaged/lost pairs, positive (+) to add found stock"
           />
-          <Select
+          <Input
             label="Reason"
             value={adjReason}
             onChange={(e) => setAdjReason(e.target.value)}
-            options={ADJUST_REASONS.map((r) => ({ value: r, label: r }))}
+            placeholder="Describe why stock is being adjusted"
           />
         </div>
       </Modal>
@@ -785,43 +1029,27 @@ export function InventoryHub() {
         open={priceOpen && !!selected}
         onClose={() => setPriceOpen(false)}
         title={`Edit pricing · ${selected?.name || ''}`}
-        subtitle="Changes apply immediately on the selling register."
+        subtitle="Updates selling & cost prices across all variants on the POS register."
         footer={
           <>
-            <Button variant="secondary" onClick={() => setPriceOpen(false)}>Cancel</Button>
-            <Button
-              variant="primary"
-              onClick={() => {
-                if (!selected) return;
-                const p = parseInt(newPrice, 10);
-                const c = parseInt(newCost, 10);
-                if (Number.isNaN(p) || p <= 0) {
-                  notify('Enter a valid selling price', 'err');
-                  return;
-                }
-                saveItem({
-                  ...selected,
-                  price: p,
-                  costPrice: Number.isNaN(c) ? selected.costPrice : c,
-                });
-                notify(`Updated price of ${selected.name} to ${formatRs(p)}`, 'ok');
-                setPriceOpen(false);
-              }}
-            >
-              Update price
+            <Button variant="secondary" onClick={() => setPriceOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" disabled={savingPrice} onClick={() => void handleSavePrice()}>
+              {savingPrice ? 'Updating...' : 'Update price'}
             </Button>
           </>
         }
       >
         <div className="space-y-4">
           <Input
-            label="Selling price (Rs)"
+            label="Selling price per pair (Rs)"
             type="number"
             value={newPrice}
             onChange={(e) => setNewPrice(e.target.value)}
           />
           <Input
-            label="Cost price (Rs)"
+            label="Cost price per pair (Rs)"
             type="number"
             value={newCost}
             onChange={(e) => setNewCost(e.target.value)}
@@ -832,16 +1060,10 @@ export function InventoryHub() {
       <ConfirmDialog
         open={deleteOpen && !!selected}
         onClose={() => setDeleteOpen(false)}
-        onConfirm={() => {
-          if (!selected) return;
-          const itemName = selected.name;
-          deleteItem(selected.id);
-          setSelectedId(null);
-          notify(`Deleted ${itemName} from catalog`, 'info');
-        }}
-        title={`Delete ${selected?.name || 'item'}?`}
-        body="This removes the item from your active catalog. Past bills keep their record."
-        confirmLabel="Delete item"
+        onConfirm={() => void handleDeleteProduct()}
+        title={`Archive ${selected?.name || 'footwear'}?`}
+        body="This hides the footwear product from the POS counter and active stock. Historical sales and receipts remain intact."
+        confirmLabel="Archive footwear"
       />
     </div>
   );

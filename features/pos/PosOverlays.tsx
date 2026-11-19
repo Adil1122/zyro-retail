@@ -1,94 +1,163 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Lock, PauseCircle, PlayCircle, Ruler, ShieldAlert, Trash2 } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Loader2, PauseCircle, PlayCircle, ShieldAlert, Trash2 } from 'lucide-react';
 import { ProductArtwork } from '@/components/domain/ProductArtwork';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Drawer } from '@/components/ui/Drawer';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
-import { MANAGER_PIN } from '@/constants/mock-data';
 import { SWATCHES } from '@/constants/kits';
 import { useZyro } from '@/hooks/useZyro';
 import { formatRs } from '@/lib/format';
-import { getFirstInStockColour, getSku, getVariantStock, getVariantText } from '@/lib/inventory';
-import type { BillDiscount, CartLine, HeldBill, ProductItem } from '@/types';
+import type { BillDiscount } from '@/types';
+import type {
+  FootwearProductRecord,
+  FootwearVariantRecord,
+  PosHeldBillRecord,
+  SizingSystem,
+} from '@/types/footwear';
+
+export interface FootwearCartLine {
+  key: string;
+  productId: string;
+  variantId: string;
+  name: string;
+  brand?: string | null;
+  artId: string;
+  imageUrl?: string | null;
+  variantText: string;
+  colourName: string;
+  sizeName: string;
+  sizingSystem: SizingSystem;
+  sku: string;
+  barcode?: string | null;
+  price: number;
+  originalPrice: number;
+  qty: number;
+  availableStock: number;
+  lineDiscount: number;
+  note?: string;
+}
 
 export function VariantPickerModal({
-  item,
+  product,
+  cartQtyByVariant,
   onClose,
   onAdd,
 }: {
-  item: ProductItem | null;
+  product: FootwearProductRecord | null;
+  cartQtyByVariant: Record<string, number>;
   onClose: () => void;
-  onAdd: (line: CartLine) => void;
+  onAdd: (variant: FootwearVariantRecord, product: FootwearProductRecord) => void;
 }) {
-  const [colourIdx, setColourIdx] = useState<number>(() => (item ? getFirstInStockColour(item) : 0));
-  const [sizeIdx, setSizeIdx] = useState<number>(0);
+  const colours = useMemo(() => {
+    if (!product) return [] as string[];
+    const list = Array.from(new Set(product.variants.filter((v) => v.isActive).map((v) => v.colourName)));
+    return list.length > 0 ? list : ['Standard'];
+  }, [product]);
 
-  if (!item) return null;
+  const initialColour = useMemo(() => {
+    if (!product) return '';
+    const inStockVariant = product.variants.find((v) => v.isActive && v.availableStock > 0);
+    return inStockVariant?.colourName || colours[0] || '';
+  }, [product, colours]);
 
-  const colours = item.colours || ['Standard'];
-  const sizes = item.sizes || [];
-  const safeCi = Math.min(colourIdx, colours.length - 1);
-  const safeSi = sizes.length > 0 ? Math.min(sizeIdx, sizes.length - 1) : null;
-  const stock = getVariantStock(item, item.colours ? safeCi : null, safeSi);
+  const [selectedColour, setSelectedColour] = useState<string>(initialColour);
 
-  const handleConfirm = () => {
-    const ci = item.colours ? safeCi : null;
-    const si = sizes.length > 0 ? safeSi : null;
-    const sku = getSku(item, ci, si);
-    const variantText = getVariantText(item, ci, si);
-    onAdd({
-      key: `${item.id}-${ci ?? 'x'}-${si ?? 'x'}`,
-      itemId: item.id,
-      name: item.name,
-      variantText,
-      sku,
-      colourIdx: ci,
-      sizeIdx: si,
-      price: item.price,
-      originalPrice: item.price,
-      qty: 1,
-      lineDiscount: 0,
-    });
-    onClose();
+  const variantsForColour = useMemo(() => {
+    if (!product) return [] as FootwearVariantRecord[];
+    return product.variants.filter(
+      (v) => v.isActive && (colours.length === 1 || v.colourName === selectedColour)
+    );
+  }, [product, colours.length, selectedColour]);
+
+  const [selectedVariantId, setSelectedVariantId] = useState<string>(() => {
+    const first = variantsForColour.find((v) => v.availableStock > 0) || variantsForColour[0];
+    return first?.id || '';
+  });
+
+  if (!product) return null;
+
+  const activeVariant =
+    variantsForColour.find((v) => v.id === selectedVariantId) ||
+    variantsForColour.find((v) => v.availableStock > 0) ||
+    variantsForColour[0] ||
+    null;
+
+  const alreadyInCart = activeVariant ? cartQtyByVariant[activeVariant.id] || 0 : 0;
+  const remainingStock = activeVariant ? Math.max(0, activeVariant.availableStock - alreadyInCart) : 0;
+
+  const handleColourSelect = (colour: string) => {
+    setSelectedColour(colour);
+    const nextList = product.variants.filter((v) => v.isActive && v.colourName === colour);
+    const firstAvail = nextList.find((v) => v.availableStock > 0) || nextList[0];
+    if (firstAvail) setSelectedVariantId(firstAvail.id);
   };
 
   return (
-    <Modal open={!!item} onClose={onClose} title={item.name} subtitle={formatRs(item.price)} maxWidth="md">
+    <Modal
+      open={!!product}
+      onClose={onClose}
+      title={product.name}
+      subtitle={[product.brand, product.footwearType, `${product.sizingSystem} sizing`].filter(Boolean).join(' · ')}
+      maxWidth="md"
+    >
       <div className="space-y-5">
         <div className="flex items-center gap-4 p-3 rounded-[12px] bg-[#FBF8F4] border border-[#E7E0D7]">
-          <ProductArtwork item={item} colourIdx={safeCi} size={64} />
-          <div>
+          <ProductArtwork
+            artId={product.artId}
+            imageUrl={product.primaryImageUrl}
+            alt={product.name}
+            size={64}
+          />
+          <div className="min-w-0 flex-1">
             <div className="font-semibold text-[15px] text-[#0B2A2F]">
-              {getVariantText(item, item.colours ? safeCi : null, safeSi)}
+              {activeVariant
+                ? `${activeVariant.colourName} · ${activeVariant.sizingSystem} ${activeVariant.sizeName}`
+                : 'Select variant'}
             </div>
-            <div className="text-[12px] text-[#52666A] mono mt-0.5">
-              SKU: {getSku(item, item.colours ? safeCi : null, safeSi)}
-            </div>
-            <div className="mt-1.5">
-              {stock > 0 ? (
-                <Badge tone="ok">{stock} in stock</Badge>
+            {activeVariant && (
+              <div className="text-[12px] text-[#52666A] mono mt-0.5 truncate">
+                SKU: {activeVariant.sku}
+                {activeVariant.primaryBarcode ? ` · ${activeVariant.primaryBarcode}` : ''}
+              </div>
+            )}
+            <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+              {activeVariant && remainingStock > 0 ? (
+                <Badge tone="ok">
+                  {activeVariant.availableStock} in stock
+                  {alreadyInCart > 0 ? ` (${alreadyInCart} in bill)` : ''}
+                </Badge>
               ) : (
-                <Badge tone="err">Out of stock</Badge>
+                <Badge tone="err">
+                  {alreadyInCart > 0 ? `All ${activeVariant?.availableStock ?? 0} already in bill` : 'Out of stock'}
+                </Badge>
+              )}
+              {activeVariant && (
+                <span className="font-bold text-[14px] text-[#08343A] num">
+                  {formatRs(activeVariant.sellingPrice)}
+                </span>
               )}
             </div>
           </div>
         </div>
 
-        {item.colours && item.colours.length > 0 && (
+        {colours.length > 0 && (
           <div className="space-y-2">
             <div className="text-[13px] font-semibold text-[#0B2A2F]">Colour</div>
             <div className="flex flex-wrap gap-2">
-              {item.colours.map((col, idx) => {
-                const active = idx === safeCi;
+              {colours.map((col) => {
+                const active = col === selectedColour;
+                const colStock = product.variants
+                  .filter((v) => v.isActive && v.colourName === col)
+                  .reduce((s, v) => s + v.availableStock, 0);
                 return (
                   <button
                     key={col}
                     type="button"
-                    onClick={() => setColourIdx(idx)}
+                    onClick={() => handleColourSelect(col)}
                     className={`px-3.5 py-2 rounded-[10px] border text-[13px] font-semibold flex items-center gap-2 ${
                       active
                         ? 'border-[#C9682E] bg-[#FCEFE4] text-[#8A3D12]'
@@ -100,6 +169,7 @@ export function VariantPickerModal({
                       className="w-3.5 h-3.5 rounded-full border border-black/15"
                     />
                     {col}
+                    <span className="text-[11px] font-normal text-[#52666A]">({colStock})</span>
                   </button>
                 );
               })}
@@ -107,45 +177,57 @@ export function VariantPickerModal({
           </div>
         )}
 
-        {sizes.length > 0 && (
-          <div className="space-y-2">
-            <div className="text-[13px] font-semibold text-[#0B2A2F]">
-              {item.sizeLabel || 'Size'}
-            </div>
-            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-              {sizes.map((sz, idx) => {
-                const st = getVariantStock(item, safeCi, idx);
-                const active = idx === safeSi;
-                return (
-                  <button
-                    key={sz}
-                    type="button"
-                    onClick={() => setSizeIdx(idx)}
-                    className={`py-2.5 px-2 rounded-[10px] border text-center transition-all ${
-                      active
-                        ? 'border-[#08343A] bg-[#08343A] text-white'
-                        : st === 0
-                          ? 'border-[#E7E0D7] bg-[#F1EBE3] text-[#5F7174]'
-                          : 'border-[#D6CDC1] bg-white hover:border-[#E2B48F]'
-                    }`}
-                  >
-                    <div className="font-bold text-[14px]">{sz}</div>
-                    <div className={`text-[11px] ${active ? 'text-[#C9DADB]' : 'text-[#52666A]'}`}>
-                      {st} left
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+        <div className="space-y-2">
+          <div className="text-[13px] font-semibold text-[#0B2A2F]">
+            Size ({activeVariant?.sizingSystem || product.sizingSystem})
           </div>
-        )}
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+            {variantsForColour.map((v) => {
+              const inCart = cartQtyByVariant[v.id] || 0;
+              const avail = Math.max(0, v.availableStock - inCart);
+              const active = activeVariant?.id === v.id;
+              return (
+                <button
+                  key={v.id}
+                  type="button"
+                  onClick={() => setSelectedVariantId(v.id)}
+                  className={`py-2.5 px-2 rounded-[10px] border text-center transition-all ${
+                    active
+                      ? 'border-[#08343A] bg-[#08343A] text-white'
+                      : avail === 0
+                        ? 'border-[#E7E0D7] bg-[#F1EBE3] text-[#5F7174]'
+                        : 'border-[#D6CDC1] bg-white hover:border-[#E2B48F]'
+                  }`}
+                >
+                  <div className="font-bold text-[14px]">
+                    {v.sizingSystem} {v.sizeName}
+                  </div>
+                  <div className={`text-[11px] ${active ? 'text-[#C9DADB]' : 'text-[#52666A]'}`}>
+                    {v.availableStock} left
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" size="lg" disabled={stock === 0} onClick={handleConfirm}>
-            {stock === 0 ? 'Out of stock' : `Add to bill · ${formatRs(item.price)}`}
+          <Button
+            variant="primary"
+            size="lg"
+            disabled={!activeVariant || remainingStock <= 0}
+            onClick={() => {
+              if (!activeVariant) return;
+              onAdd(activeVariant, product);
+              onClose();
+            }}
+          >
+            {!activeVariant || remainingStock <= 0
+              ? 'Out of stock'
+              : `Add to bill · ${formatRs(activeVariant.sellingPrice)}`}
           </Button>
         </div>
       </div>
@@ -158,6 +240,8 @@ export function DiscountModal({
   onClose,
   subtotal,
   current,
+  canDiscount = true,
+  canApproveHighDiscount = false,
   onApply,
   onRemove,
 }: {
@@ -165,34 +249,47 @@ export function DiscountModal({
   onClose: () => void;
   subtotal: number;
   current: BillDiscount | null;
+  canDiscount?: boolean;
+  canApproveHighDiscount?: boolean;
   onApply: (d: BillDiscount) => void;
   onRemove: () => void;
 }) {
-  const { role, settings, notify } = useZyro();
+  const { settings, notify } = useZyro();
   const [mode, setMode] = useState<'pct' | 'rs'>(current?.mode || 'pct');
   const [value, setValue] = useState(String(current?.value || 5));
   const [reason, setReason] = useState(current?.reason || 'Regular customer discount');
-  const [managerPin, setManagerPin] = useState('');
   const [error, setError] = useState('');
 
   const numVal = Math.max(0, Number(value) || 0);
   const pctEquiv = mode === 'pct' ? numVal : subtotal > 0 ? Math.round((numVal / subtotal) * 100) : 0;
-  const needsManager = role === 'cashier' && pctEquiv > settings.cashierMaxDiscountPct;
+  const maxCashierPct = settings.cashierMaxDiscountPct || 10;
+  const exceedsLimit = !canApproveHighDiscount && pctEquiv > maxCashierPct;
 
   const handleApply = () => {
+    if (!canDiscount) {
+      setError('Your role does not have permission to apply bill discounts.');
+      return;
+    }
     if (numVal <= 0) {
       setError('Enter a discount greater than 0.');
       return;
     }
-    if (needsManager && managerPin !== MANAGER_PIN) {
-      setError(`Discounts over ${settings.cashierMaxDiscountPct}% need Manager PIN (${MANAGER_PIN}).`);
+    if (mode === 'pct' && numVal > 100) {
+      setError('Percentage discount cannot exceed 100%.');
+      return;
+    }
+    if (mode === 'rs' && numVal > subtotal) {
+      setError('Discount cannot exceed bill subtotal.');
+      return;
+    }
+    if (exceedsLimit) {
+      setError(`Your role is limited to ${maxCashierPct}% discount. Ask an owner or manager.`);
       return;
     }
     onApply({
       mode,
       value: numVal,
-      reason,
-      approvedBy: needsManager ? 'Imran (Manager)' : undefined,
+      reason: reason.trim() || undefined,
     });
     notify('Discount applied to bill', 'ok');
     onClose();
@@ -249,22 +346,10 @@ export function DiscountModal({
         />
         <Input label="Reason" value={reason} onChange={(e) => setReason(e.target.value)} />
 
-        {needsManager && (
-          <div className="p-3.5 rounded-[12px] bg-[#FFF3C4] border border-[#EBD892] space-y-2.5">
-            <div className="flex items-center gap-2 text-[13px] font-semibold text-[#6B4E00]">
-              <ShieldAlert className="w-4 h-4 shrink-0" />
-              Over {settings.cashierMaxDiscountPct}% cashier limit — enter Manager PIN ({MANAGER_PIN})
-            </div>
-            <Input
-              label="Manager PIN"
-              type="password"
-              maxLength={4}
-              value={managerPin}
-              onChange={(e) => {
-                setManagerPin(e.target.value);
-                setError('');
-              }}
-            />
+        {exceedsLimit && (
+          <div className="p-3.5 rounded-[12px] bg-[#FFF3C4] border border-[#EBD892] flex items-center gap-2 text-[13px] font-semibold text-[#6B4E00]">
+            <ShieldAlert className="w-4 h-4 shrink-0" />
+            Discounts over {maxCashierPct}% require owner/manager approval permission.
           </div>
         )}
 
@@ -288,7 +373,7 @@ export function DiscountModal({
             <Button variant="secondary" onClick={onClose}>
               Cancel
             </Button>
-            <Button variant="primary" onClick={handleApply}>
+            <Button variant="primary" onClick={handleApply} disabled={!canDiscount}>
               Apply discount
             </Button>
           </div>
@@ -300,49 +385,101 @@ export function DiscountModal({
 
 export function LineEditModal({
   line,
+  canOverridePrice = false,
+  canDiscount = true,
   onClose,
   onSave,
   onRemove,
 }: {
-  line: CartLine | null;
+  line: FootwearCartLine | null;
+  canOverridePrice?: boolean;
+  canDiscount?: boolean;
   onClose: () => void;
-  onSave: (key: string, patch: Partial<CartLine>) => void;
+  onSave: (key: string, patch: Partial<FootwearCartLine>) => void;
   onRemove: (key: string) => void;
 }) {
-  const { role } = useZyro();
   const [qty, setQty] = useState(line ? line.qty : 1);
   const [price, setPrice] = useState(line ? line.price : 0);
+  const [lineDiscount, setLineDiscount] = useState(line ? line.lineDiscount : 0);
   const [note, setNote] = useState(line?.note || '');
+  const [err, setErr] = useState('');
 
   if (!line) return null;
 
+  const maxLineDiscount = Math.max(0, price * qty);
+
+  const handleSave = () => {
+    if (qty < 1) {
+      setErr('Quantity must be at least 1 pair.');
+      return;
+    }
+    if (qty > line.availableStock) {
+      setErr(`Only ${line.availableStock} pairs available in this branch.`);
+      return;
+    }
+    if (lineDiscount < 0 || lineDiscount > maxLineDiscount) {
+      setErr(`Line discount must be between 0 and ${formatRs(maxLineDiscount)}.`);
+      return;
+    }
+    onSave(line.key, {
+      qty,
+      price: canOverridePrice ? price : line.originalPrice,
+      lineDiscount: canDiscount ? lineDiscount : 0,
+      note: note.trim() || undefined,
+    });
+    onClose();
+  };
+
   return (
-    <Modal open={!!line} onClose={onClose} title={line.name} subtitle={`${line.variantText} · ${line.sku}`} maxWidth="sm">
+    <Modal
+      open={!!line}
+      onClose={onClose}
+      title={line.name}
+      subtitle={`${line.variantText} · ${line.sku}`}
+      maxWidth="sm"
+    >
       <div className="space-y-4">
         <Input
-          label={line.variantText.startsWith('Measured') ? 'Quantity / Length (m or kg)' : 'Quantity'}
+          label={`Quantity (max ${line.availableStock} available)`}
           type="number"
-          step={line.variantText.startsWith('Measured') ? '0.25' : '1'}
-          min={line.variantText.startsWith('Measured') ? 0.25 : 1}
+          min={1}
+          max={Math.max(1, line.availableStock)}
           value={qty}
           onChange={(e) => {
-            const val = Number(e.target.value);
-            if (line.variantText.startsWith('Measured')) {
-              setQty(Math.max(0.25, Number.isNaN(val) ? 1 : val));
-            } else {
-              setQty(Math.max(1, Math.round(val) || 1));
-            }
+            const val = Math.max(1, Math.round(Number(e.target.value)) || 1);
+            setQty(val);
+            setErr('');
           }}
         />
         <Input
           label="Unit price (Rs)"
           type="number"
-          disabled={role === 'cashier'}
+          disabled={!canOverridePrice}
           value={price}
-          onChange={(e) => setPrice(Math.max(0, Number(e.target.value) || 0))}
-          hint={role === 'cashier' ? 'Only owner/manager can override item price' : undefined}
+          onChange={(e) => {
+            setPrice(Math.max(0, Number(e.target.value) || 0));
+            setErr('');
+          }}
+          hint={!canOverridePrice ? 'Only owner/manager can override item price' : undefined}
         />
-        <Input label="Line note (optional)" placeholder="e.g. Gift wrap" value={note} onChange={(e) => setNote(e.target.value)} />
+        <Input
+          label="Line discount (Rs)"
+          type="number"
+          min={0}
+          disabled={!canDiscount}
+          value={lineDiscount}
+          onChange={(e) => {
+            setLineDiscount(Math.max(0, Number(e.target.value) || 0));
+            setErr('');
+          }}
+        />
+        <Input
+          label="Line note (optional)"
+          placeholder="e.g. Gift box requested"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          error={err}
+        />
 
         <div className="flex items-center justify-between pt-2">
           <Button
@@ -358,13 +495,7 @@ export function LineEditModal({
             <Button variant="secondary" onClick={onClose}>
               Cancel
             </Button>
-            <Button
-              variant="primary"
-              onClick={() => {
-                onSave(line.key, { qty, price, note });
-                onClose();
-              }}
-            >
+            <Button variant="primary" onClick={handleSave}>
               Save line
             </Button>
           </div>
@@ -378,21 +509,27 @@ export function HeldBillsDrawer({
   open,
   onClose,
   heldBills,
+  loading,
   canHoldCurrent,
+  holding,
   onHoldCurrent,
   onRecall,
+  onDelete,
 }: {
   open: boolean;
   onClose: () => void;
-  heldBills: HeldBill[];
+  heldBills: PosHeldBillRecord[];
+  loading?: boolean;
   canHoldCurrent: boolean;
-  onHoldCurrent: (note?: string) => void;
-  onRecall: (id: string) => void;
+  holding?: boolean;
+  onHoldCurrent: (note?: string) => Promise<void> | void;
+  onRecall: (bill: PosHeldBillRecord) => void;
+  onDelete: (id: string) => Promise<void> | void;
 }) {
   const [note, setNote] = useState('');
 
   return (
-    <Drawer open={open} onClose={onClose} title="Held bills" subtitle="Pause a customer bill and bring it back anytime">
+    <Drawer open={open} onClose={onClose} title="Held bills" subtitle="Pause a customer bill without deducting stock">
       <div className="space-y-5">
         {canHoldCurrent && (
           <div className="p-4 rounded-[12px] bg-[#FCEFE4] border border-[#E2B48F] space-y-3">
@@ -400,53 +537,73 @@ export function HeldBillsDrawer({
               <PauseCircle className="w-4 h-4" /> Hold current bill
             </div>
             <Input
-              placeholder="Note (e.g. Checking matching dupatta)"
+              placeholder="Note (e.g. Trying EU 42 sneakers)"
               value={note}
               onChange={(e) => setNote(e.target.value)}
             />
             <Button
               variant="primary"
               fullWidth
-              onClick={() => {
-                onHoldCurrent(note);
+              disabled={holding}
+              onClick={async () => {
+                await onHoldCurrent(note.trim() || undefined);
                 setNote('');
                 onClose();
               }}
             >
+              {holding ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
               Hold current bill
             </Button>
           </div>
         )}
 
         <div className="space-y-2.5">
-          {heldBills.length === 0 ? (
+          {loading ? (
+            <div className="py-10 text-center text-[13px] text-[#52666A] flex items-center justify-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading held bills...
+            </div>
+          ) : heldBills.length === 0 ? (
             <div className="py-10 text-center text-[14px] text-[#52666A]">
               No bills are on hold right now.
             </div>
           ) : (
             heldBills.map((h) => {
-              const total = h.lines.reduce((s, l) => s + l.price * l.qty, 0);
+              const qtyCount = h.cartPayload.reduce((s, l) => s + l.qty, 0);
               return (
                 <div key={h.id} className="p-4 rounded-[12px] border border-[#E7E0D7] bg-white space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="mono font-bold text-[14px]">Bill #{h.billNo}</span>
-                    <span className="text-[12px] text-[#52666A]">{h.heldAt}</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="mono font-bold text-[14px]">{h.holdCode}</span>
+                    <span className="text-[12px] text-[#52666A]">
+                      {new Date(h.heldAt).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
                   </div>
                   <div className="text-[13px] text-[#3D5357]">
-                    {h.lines.length} items · <span className="font-bold num">{formatRs(total)}</span>
+                    {qtyCount} pair{qtyCount === 1 ? '' : 's'} ·{' '}
+                    <span className="font-bold num">{formatRs(h.totalEstimate)}</span>
+                    {h.customerName ? ` · ${h.customerName}` : ''}
                   </div>
                   {h.note && <div className="text-[12px] text-[#52666A] italic">“{h.note}”</div>}
-                  <Button
-                    variant="dark"
-                    size="sm"
-                    fullWidth
-                    onClick={() => {
-                      onRecall(h.id);
-                      onClose();
-                    }}
-                  >
-                    <PlayCircle className="w-4 h-4" /> Bring back to register
-                  </Button>
+                  <div className="flex gap-2 pt-1">
+                    <Button
+                      variant="dark"
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => {
+                        onRecall(h);
+                        onClose();
+                      }}
+                    >
+                      <PlayCircle className="w-4 h-4" /> Resume bill
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void onDelete(h.id)}
+                      aria-label="Cancel held bill"
+                    >
+                      <Trash2 className="w-4 h-4 text-[#B42318]" />
+                    </Button>
+                  </div>
                 </div>
               );
             })
@@ -454,32 +611,5 @@ export function HeldBillsDrawer({
         </div>
       </div>
     </Drawer>
-  );
-}
-
-export function MeasuredBlockedModal({
-  open,
-  onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
-  return (
-    <Modal open={open} onClose={onClose} title="Fabric by the metre can’t be sold yet" maxWidth="sm">
-      <div className="space-y-4">
-        <div className="w-12 h-12 rounded-full bg-[#FFF3C4] text-[#6B4E00] flex items-center justify-center">
-          <Ruler className="w-6 h-6" />
-        </div>
-        <p className="text-[14px] text-[#3D5357] leading-relaxed">
-          Measured-by-the-metre selling is locked on this counter until the owner approves the pilot bolt count in Stock → Measured items.
-        </p>
-        <div className="flex items-center gap-2 text-[13px] text-[#52666A]">
-          <Lock className="w-4 h-4" /> Ask your owner to review and unlock measured rolls.
-        </div>
-        <Button variant="dark" fullWidth onClick={onClose}>
-          Got it
-        </Button>
-      </div>
-    </Modal>
   );
 }

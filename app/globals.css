@@ -295,3 +295,26 @@ select:focus-visible,
     animation: none !important;
   }
 }
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .zyro-print-area,
+  .zyro-print-area * {
+    visibility: visible;
+  }
+  .zyro-print-area {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 80mm;
+    max-width: 100%;
+    margin: 0;
+    padding: 8px;
+    background: #FFFFFF !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+}
+
