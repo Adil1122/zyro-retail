@@ -2,6 +2,7 @@
 
 import React, { useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import { useAuth } from '@/features/auth/hooks/useAuth';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useZyro } from '@/hooks/useZyro';
 import { canAccessPath } from '@/lib/permissions';
@@ -15,18 +16,56 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { isPhone, isTablet } = useBreakpoint();
   const { role, session, lang } = useZyro();
+  const auth = useAuth();
 
   useEffect(() => {
+    if (auth.configured) {
+      if (auth.loading) return;
+      if (!auth.session.authenticated) {
+        router.replace('/welcome');
+        return;
+      }
+      if (auth.session.accountStatus === 'needs_workspace_selection') {
+        router.replace('/select-workspace');
+        return;
+      }
+      if (auth.session.accountStatus === 'disabled') {
+        router.replace('/account-disabled');
+        return;
+      }
+      if (auth.session.accountStatus === 'pending' || auth.session.accountStatus === 'no_membership') {
+        router.replace('/account-pending');
+        return;
+      }
+      return;
+    }
+
     if (!session.isAuthenticated) {
       router.replace('/welcome');
     }
-  }, [session.isAuthenticated, router]);
+  }, [auth.configured, auth.loading, auth.session.authenticated, auth.session.accountStatus, session.isAuthenticated, router]);
 
-  if (!session.isAuthenticated) {
+  if (auth.configured) {
+    if (auth.loading) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-[#F4EFE9] text-[#0B2A2F]">
+          <div className="flex items-center gap-3 px-5 py-3.5 rounded-[14px] bg-white border border-[#E7E0D7]">
+            <span className="w-8 h-8 rounded-[9px] bg-[#E58A4E] text-[#08343A] font-display font-bold flex items-center justify-center">
+              Z
+            </span>
+            <span className="text-[15px] font-semibold">Loading your workspace…</span>
+          </div>
+        </div>
+      );
+    }
+    if (!auth.session.authenticated || auth.session.accountStatus !== 'active') {
+      return null;
+    }
+  } else if (!session.isAuthenticated) {
     return null;
   }
 
-  const allowed = canAccessPath(role, pathname);
+  const allowed = canAccessPath(role, pathname, auth.configured ? auth.permissions : undefined);
 
   return (
     <div className="min-h-screen flex bg-[#F4EFE9] text-[#0B2A2F]">

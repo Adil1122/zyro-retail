@@ -6821,6 +6821,145 @@ export interface Database {
           },
         ];
       };
+      auth_otp_challenges: {
+        Row: {
+          id: string;
+          phone_e164: string;
+          purpose: string;
+          otp_hash: string;
+          otp_salt: string;
+          verification_token_hash: string | null;
+          status: string;
+          attempts: number;
+          max_attempts: number;
+          expires_at: string;
+          verified_at: string | null;
+          consumed_at: string | null;
+          request_ip: string | null;
+          user_agent: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          phone_e164: string;
+          purpose: string;
+          otp_hash: string;
+          otp_salt: string;
+          verification_token_hash?: string | null;
+          status?: string;
+          attempts?: number;
+          max_attempts?: number;
+          expires_at: string;
+          verified_at?: string | null;
+          consumed_at?: string | null;
+          request_ip?: string | null;
+          user_agent?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          phone_e164?: string;
+          purpose?: string;
+          otp_hash?: string;
+          otp_salt?: string;
+          verification_token_hash?: string | null;
+          status?: string;
+          attempts?: number;
+          max_attempts?: number;
+          expires_at?: string;
+          verified_at?: string | null;
+          consumed_at?: string | null;
+          request_ip?: string | null;
+          user_agent?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      business_invitations: {
+        Row: {
+          id: string;
+          business_id: string;
+          branch_id: string;
+          role_id: string;
+          member_id: string | null;
+          invited_name: string;
+          invited_phone_e164: string;
+          token_hash: string;
+          status: string;
+          expires_at: string;
+          invited_by_member_id: string | null;
+          accepted_at: string | null;
+          accepted_by_user_id: string | null;
+          revoked_at: string | null;
+          revoked_by_user_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          business_id: string;
+          branch_id: string;
+          role_id: string;
+          member_id?: string | null;
+          invited_name: string;
+          invited_phone_e164: string;
+          token_hash: string;
+          status?: string;
+          expires_at: string;
+          invited_by_member_id?: string | null;
+          accepted_at?: string | null;
+          accepted_by_user_id?: string | null;
+          revoked_at?: string | null;
+          revoked_by_user_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          business_id?: string;
+          branch_id?: string;
+          role_id?: string;
+          member_id?: string | null;
+          invited_name?: string;
+          invited_phone_e164?: string;
+          token_hash?: string;
+          status?: string;
+          expires_at?: string;
+          invited_by_member_id?: string | null;
+          accepted_at?: string | null;
+          accepted_by_user_id?: string | null;
+          revoked_at?: string | null;
+          revoked_by_user_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "business_invitations_business_id_fkey";
+            columns: ["business_id"];
+            isOneToOne: false;
+            referencedRelation: "businesses";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "business_invitations_branch_id_fkey";
+            columns: ["branch_id"];
+            isOneToOne: false;
+            referencedRelation: "branches";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "business_invitations_role_id_fkey";
+            columns: ["role_id"];
+            isOneToOne: false;
+            referencedRelation: "roles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: {
       v_daily_branch_sales: {
@@ -6891,6 +7030,19 @@ export interface Database {
       has_branch_access: { Args: { p_business_id: string; p_branch_id: string }; Returns: boolean };
       has_permission: { Args: { p_business_id: string; p_permission_key: string }; Returns: boolean };
       create_business_workspace: { Args: { p_payload: Json }; Returns: Json };
+      provision_owner_workspace_for_user: {
+        Args: { p_user_id: string; p_payload: Json };
+        Returns: Json;
+      };
+      accept_business_invitation_for_user: {
+        Args: {
+          p_user_id: string;
+          p_invitation_id: string;
+          p_full_name: string;
+          p_phone_e164: string;
+        };
+        Returns: Json;
+      };
       complete_sale: { Args: { p_payload: Json }; Returns: Json };
       receive_purchase_order: { Args: { p_payload: Json }; Returns: Json };
       process_sales_return: { Args: { p_payload: Json }; Returns: Json };

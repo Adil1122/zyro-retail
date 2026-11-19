@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Inter, Inter_Tight, JetBrains_Mono, Noto_Naskh_Arabic } from 'next/font/google';
 import './globals.css';
 import { ToastContainer } from '@/components/ui/Toast';
+import { AuthProvider } from '@/features/auth/hooks/useAuth';
 import { ZyroStoreProvider } from '@/services/zyro-store';
 
 const inter = Inter({
@@ -52,8 +53,10 @@ export default function RootLayout({
     >
       <body className="min-h-screen bg-[#F4EFE9] text-[#0B2A2F]">
         <ZyroStoreProvider>
-          {children}
-          <ToastContainer />
+          <AuthProvider>
+            {children}
+            <ToastContainer />
+          </AuthProvider>
         </ZyroStoreProvider>
       </body>
     </html>

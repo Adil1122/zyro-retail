@@ -23,7 +23,13 @@ import {
   Upload,
 } from 'lucide-react';
 import { categoriesForKit, kitById } from '@/constants/kits';
+import { DevOtpNotice } from '@/features/auth/components/DevOtpNotice';
+import { PhoneInputField } from '@/features/auth/components/PhoneInputField';
+import { useAuth } from '@/features/auth/hooks/useAuth';
+import { AuthApiError, authService } from '@/features/auth/services/auth.service';
+import { COUNTRY_OPTIONS, SUPPORTED_CURRENCIES } from '@/features/auth/types/auth.types';
 import { useZyro } from '@/hooks/useZyro';
+import { formatE164ForDisplay, normalizePhoneToE164, validatePasswordStrength } from '@/lib/auth/phone';
 import type { ShopKitId } from '@/types';
 import { AuthFlowShell } from './AuthFlowShell';
 
@@ -139,63 +145,203 @@ const CITIES = [
   'Other',
 ];
 
-const WRONG_CODE = '481923';
-
 export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep }) {
   const router = useRouter();
-  const { completeAuthSignIn, updateOwnerPassword, updateSettings, setKit, notify } = useZyro();
+  const auth = useAuth();
+  const { completeAuthSignIn, updateSettings, setKit, notify } = useZyro();
 
   const [step, setStep] = useState<RegStep>(initialStep);
-  const [phone, setPhone] = useState('321 4567890');
+  const [dialCode, setDialCode] = useState('+92');
+  const [phone, setPhone] = useState('');
+  const [phoneE164, setPhoneE164] = useState('');
   const [agree, setAgree] = useState(true);
   const [taken, setTaken] = useState(false);
 
-  const [code, setCode] = useState('482913');
-  const [codeBad, setCodeBad] = useState(false);
+  const [code, setCode] = useState('');
+  const [devOtp, setDevOtp] = useState<string | null>(null);
+  const [verificationToken, setVerificationToken] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [otpExpirySeconds, setOtpExpirySeconds] = useState(0);
 
-  const [name, setName] = useState('Hamza Sheikh');
-  const [email, setEmail] = useState('hamza@yourshop.pk');
-  const [pw, setPw] = useState('Stride2026');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [pw, setPw] = useState('');
+  const [confirmPw, setConfirmPw] = useState('');
   const [pwShown, setPwShown] = useState(false);
 
-  const [shop, setShop] = useState('Stride Footwear');
+  const [shop, setShop] = useState('');
+  const [branchName, setBranchName] = useState('Main branch');
+  const [businessPhone, setBusinessPhone] = useState('');
+  const [countryCode, setCountryCode] = useState('PK');
+  const [currency, setCurrency] = useState<string>('PKR');
   const [city, setCity] = useState('Lahore');
   const [cityName, setCityName] = useState('');
-  const [area, setArea] = useState('Liberty Market, Gulberg');
+  const [area, setArea] = useState('');
   const [branches, setBranches] = useState<1 | 2 | 4>(1);
   const [hasLogo, setHasLogo] = useState(false);
 
   const [selectedKit, setSelectedKit] = useState<ShopKitId>('shoes');
   const [builtCount, setBuiltCount] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const digits10 = phone.replace(/\D/g, '').slice(0, 10);
-  const phoneOk = /^3\d{9}$/.test(digits10);
-  const phoneFormatted =
-    digits10.length >= 3 ? `+92 ${digits10.slice(0, 3)} ${digits10.slice(3)}` : '+92 321 4567890';
+  const normalizedPhone = normalizePhoneToE164(phone, dialCode);
+  const phoneOk = normalizedPhone.valid;
+  const resolvedPhoneE164 = phoneE164 || normalizedPhone.e164 || '';
+  const phoneFormatted = resolvedPhoneE164
+    ? formatE164ForDisplay(resolvedPhoneE164)
+    : `${dialCode} ${phone || '300 1234567'}`;
 
   const codeOk = /^\d{6}$/.test(code);
-
-  const r1 = pw.length >= 8;
-  const r2 = /\d/.test(pw);
-  const r3 = !digits10 || !pw.replace(/\D/g, '').includes(digits10);
-  const pwOk = r1 && r2 && r3;
+  const pwValidation = validatePasswordStrength(pw, resolvedPhoneE164);
+  const pwMatch = pw.length > 0 && confirmPw === pw;
+  const pwOk = pwValidation.valid && pwMatch;
 
   const cityShown = city === 'Other' ? cityName.trim() || '—' : city;
-  const shopName = shop.trim() || 'Stride Footwear';
-  const shopInitial = (shopName[0] || 'S').toUpperCase();
+  const shopName = shop.trim() || 'Your Shop';
+  const shopInitial = (shopName[0] || 'Z').toUpperCase();
   const kitMeta = KIT_META[selectedKit];
   const kitCats = categoriesForKit(selectedKit).map((c) => c.label);
 
+  // Resend cooldown & expiry timers
   useEffect(() => {
-    if (step !== 'building') return;
-    setBuiltCount(0);
-    const timers: Array<ReturnType<typeof setTimeout>> = [];
-    [1, 2, 3, 4, 5].forEach((k) => {
-      timers.push(setTimeout(() => setBuiltCount(k), k * 340));
-    });
-    timers.push(setTimeout(() => setStep('ready'), 5 * 340 + 420));
-    return () => timers.forEach(clearTimeout);
-  }, [step]);
+    if (resendCooldown <= 0 && otpExpirySeconds <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+      setOtpExpirySeconds((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown, otpExpirySeconds]);
+
+  const handleRequestOtp = async (isResend = false) => {
+    if (!normalizedPhone.valid || !normalizedPhone.e164) return;
+    setBusy(true);
+    setErrorMsg(null);
+    setTaken(false);
+
+    try {
+      const res = await authService.requestOtp({
+        phone: normalizedPhone.e164,
+        dialCode,
+        purpose: 'owner_register',
+        isResend,
+      });
+
+      setPhoneE164(res.phoneE164);
+      setBusinessPhone((prev) => prev || formatE164ForDisplay(res.phoneE164));
+      setDevOtp(res.devOtp ?? null);
+      setResendCooldown(res.resendCooldownSeconds || 60);
+      setOtpExpirySeconds(res.expiresInSeconds || 300);
+      setCode('');
+      setStep('code');
+      notify(isResend ? 'New verification code generated' : 'Verification code sent', 'info');
+    } catch (err) {
+      if (err instanceof AuthApiError && err.code === 'PHONE_ALREADY_REGISTERED') {
+        setTaken(true);
+      } else if (err instanceof AuthApiError && err.code === 'OTP_COOLDOWN') {
+        const retryAfter = Number(err.details?.retryAfterSeconds) || 60;
+        setResendCooldown(retryAfter);
+        setErrorMsg(err.message);
+      } else {
+        setErrorMsg(err instanceof Error ? err.message : 'Unable to send verification code.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    if (!codeOk || !resolvedPhoneE164) return;
+    setBusy(true);
+    setErrorMsg(null);
+
+    try {
+      const res = await authService.verifyOtp({
+        phone: resolvedPhoneE164,
+        purpose: 'owner_register',
+        code,
+      });
+
+      setVerificationToken(res.verificationToken);
+      setDevOtp(null);
+      setStep('you');
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Verification code did not match.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCreateAccount = async () => {
+    setBusy(true);
+    setErrorMsg(null);
+    setStep('building');
+    setBuiltCount(1);
+
+    const progressTimer = setInterval(() => {
+      setBuiltCount((prev) => (prev < 4 ? prev + 1 : prev));
+    }, 350);
+
+    try {
+      const selectedCountry = COUNTRY_OPTIONS.find((c) => c.code === countryCode) || COUNTRY_OPTIONS[0];
+      const res = await authService.registerOwner({
+        fullName: name.trim(),
+        phone: resolvedPhoneE164,
+        dialCode,
+        email: email.trim() || undefined,
+        password: pw,
+        confirmPassword: confirmPw,
+        acceptedTerms: agree,
+        verificationToken,
+        businessName: shop.trim(),
+        businessPhone: businessPhone.trim() || resolvedPhoneE164,
+        businessType: selectedKit,
+        country: selectedCountry.name,
+        currency,
+        timezone: selectedCountry.timezone,
+        branchName: branchName.trim() || 'Main branch',
+        city: cityShown === '—' ? undefined : cityShown,
+        address: area.trim() || undefined,
+      });
+
+      clearInterval(progressTimer);
+      setBuiltCount(5);
+
+      await auth.refreshSession();
+
+      const cfg = kitById(selectedKit);
+      setKit(selectedKit);
+      completeAuthSignIn('owner', shop.trim() || cfg.defaultShopName, selectedKit, name.trim());
+      updateSettings({
+        shopName: shop.trim(),
+        phone: resolvedPhoneE164,
+        city: cityShown === '—' ? 'Lahore' : cityShown,
+        address: area.trim(),
+      });
+
+      setTimeout(() => {
+        setStep('ready');
+        notify(`${shop.trim()} is ready`, 'ok');
+      }, 320);
+
+      if (!res.signedIn) {
+        notify('Account created — please sign in to open your shop.', 'info');
+      }
+    } catch (err) {
+      clearInterval(progressTimer);
+      setBuiltCount(0);
+      const message = err instanceof Error ? err.message : 'Unable to create your shop right now.';
+      setErrorMsg(message);
+
+      if (err instanceof AuthApiError && err.code?.startsWith('OTP_TOKEN')) {
+        setStep('phone');
+      } else {
+        setStep('kind');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const curIdx = STEP_LIST.findIndex((s) => s.id === (step === 'building' ? 'ready' : step));
   const steps = STEP_LIST.map((s, i) => {
@@ -204,22 +350,6 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
     return { id: s.id, label: s.label, done, active, number: i + 1 };
   });
 
-  const commitAccount = (targetRoute: string) => {
-    const cleanShop = shopName;
-    const cfg = kitById(selectedKit);
-    setKit(selectedKit);
-    updateOwnerPassword(pw);
-    completeAuthSignIn('owner', cleanShop || cfg.defaultShopName, selectedKit, name.trim() || 'Hamza Sheikh');
-    updateSettings({
-      shopName: cleanShop,
-      phone: `0${digits10}`,
-      city: cityShown === '—' ? 'Lahore' : cityShown,
-      address: area.trim() || 'Liberty Market, Gulberg',
-    });
-    notify(`${cleanShop} is ready`, 'ok');
-    router.push(targetRoute);
-  };
-
   let why = '';
   let nextLabel = 'Next';
   let onNext: (() => void) | undefined = undefined;
@@ -227,68 +357,90 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
   let onBack: (() => void) | undefined = undefined;
 
   if (step === 'phone') {
-    why = !phoneOk ? 'Type a 10-digit number starting with 3' : !agree ? 'Tick that you agree to the terms' : '';
-    nextLabel = 'Send code';
+    why = !phoneOk
+      ? normalizedPhone.error || 'Enter a valid mobile number'
+      : !agree
+        ? 'Tick that you agree to the terms'
+        : '';
+    nextLabel = busy ? 'Sending code…' : 'Send code';
     backHref = '/welcome';
     onNext = () => {
-      if (why) return;
-      if (digits10 === '3001234567') {
-        setTaken(true);
-        return;
-      }
-      setCode('');
-      setCodeBad(false);
-      setStep('code');
+      if (!why) void handleRequestOtp(false);
     };
   } else if (step === 'code') {
-    why = !codeOk ? 'Type all 6 digits' : '';
-    nextLabel = 'Check code';
-    onBack = () => setStep('phone');
+    why = !codeOk ? 'Type all 6 digits' : otpExpirySeconds === 0 && devOtp ? 'Code expired — request a new one' : '';
+    nextLabel = busy ? 'Checking…' : 'Verify code';
+    onBack = () => {
+      setErrorMsg(null);
+      setStep('phone');
+    };
     onNext = () => {
-      if (!codeOk) return;
-      if (code === WRONG_CODE) {
-        setCodeBad(true);
-        return;
-      }
-      setStep('you');
+      if (codeOk) void handleVerifyOtp();
     };
   } else if (step === 'you') {
-    why = !name.trim() ? 'Type your name' : !pwOk ? 'Pick a password that meets all three' : '';
-    onBack = () => setStep('code');
+    why = !name.trim()
+      ? 'Type your full name'
+      : !pwValidation.valid
+        ? pwValidation.errors[0] || 'Pick a password that meets all three rules'
+        : !pwMatch
+          ? 'Confirm password must match your password'
+          : '';
+    onBack = () => {
+      setErrorMsg(null);
+      setStep('code');
+    };
     onNext = () => {
-      if (!why) setStep('shop');
+      if (!why) {
+        setErrorMsg(null);
+        setStep('shop');
+      }
     };
   } else if (step === 'shop') {
-    why = !shop.trim() ? 'Type the shop name' : city === 'Other' && !cityName.trim() ? 'Type the city name' : '';
-    onBack = () => setStep('you');
+    why = !shop.trim()
+      ? 'Type the shop name'
+      : !branchName.trim()
+        ? 'Type your first branch name'
+        : city === 'Other' && !cityName.trim()
+          ? 'Type the city name'
+          : '';
+    onBack = () => {
+      setErrorMsg(null);
+      setStep('you');
+    };
     onNext = () => {
-      if (!why) setStep('kind');
+      if (!why) {
+        setErrorMsg(null);
+        setStep('kind');
+      }
     };
   } else if (step === 'kind') {
-    nextLabel = 'Create my shop';
-    onBack = () => setStep('shop');
-    onNext = () => setStep('building');
+    nextLabel = busy ? 'Creating shop…' : 'Create my shop';
+    onBack = () => {
+      setErrorMsg(null);
+      setStep('shop');
+    };
+    onNext = () => void handleCreateAccount();
   } else if (step === 'ready') {
     nextLabel = 'Set up this counter';
-    onNext = () => commitAccount('/setup');
+    onNext = () => router.push('/setup');
   }
 
   const TITLES: Record<RegStep, { t: string; s: string }> = {
     phone: {
       t: 'What’s your mobile number?',
-      s: 'You’ll sign in with it. We send a 6-digit code to check it’s yours.',
+      s: 'You’ll sign in with it. We send a 6-digit code to verify it’s yours.',
     },
     code: {
-      t: 'Type the code we sent',
-      s: 'It came by SMS. It works for 10 minutes.',
+      t: 'Verify your mobile number',
+      s: 'Enter the 6-digit verification code. It works for 5 minutes.',
     },
     you: {
       t: 'About you',
-      s: 'You’ll be the owner. Staff get their own sign-in later.',
+      s: 'You’ll be the business owner. Staff receive separate invitations later.',
     },
     shop: {
-      t: 'Your shop',
-      s: 'This goes on your receipts. Change it any time in Settings.',
+      t: 'Your business and first branch',
+      s: 'This goes on your receipts and sets up your main branch. Change it any time in Settings.',
     },
     kind: {
       t: 'What do you sell?',
@@ -296,20 +448,20 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
     },
     building: {
       t: `Setting up ${shopName}`,
-      s: 'This takes a few seconds.',
+      s: 'Creating your secure owner account, business, roles and first branch…',
     },
     ready: {
       t: `${shopName} is ready`,
-      s: 'You’re signed in as the owner. Do these next, in any order.',
+      s: 'You’re signed in as the Owner. Do these next, in any order.',
     },
   };
 
   const buildRows = [
-    `Owner account for ${name.trim() || 'Hamza Sheikh'}`,
-    `Main branch in ${cityShown}`,
-    `Categories: ${kitCats.join(', ') || 'General'}`,
-    'Labels and receipt with your shop name',
-    'Your Home and today’s page',
+    `Verified owner account for ${name.trim() || 'Owner'}`,
+    `${branchName.trim() || 'Main branch'} in ${cityShown}`,
+    `Owner, Cashier & Stockkeeper roles and permissions`,
+    `Payment methods, cash drawer and ${currency} receipt setup`,
+    'Your Owner Home and live session',
   ];
 
   const nextCards = [
@@ -329,19 +481,25 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
     },
     {
       n: 3,
-      t: 'Add your staff',
-      s: 'Each person gets an SMS to join and only sees their job.',
-      href: '/settings',
+      t: 'Invite your staff',
+      s: 'Send cashiers and stockkeepers a secure invite link to join your branch.',
+      href: '/staff',
       hi: false,
     },
     {
       n: 4,
-      t: 'Get the phone app',
-      s: 'Sign in with the same number to scan and take item photos.',
-      href: '/inventory/photos',
+      t: 'Open Owner Home',
+      s: 'Review today’s sales, cash drawer, stock watch and payables.',
+      href: '/home',
       hi: false,
     },
   ];
+
+  const formatTimer = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  };
 
   return (
     <AuthFlowShell
@@ -365,8 +523,9 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
       nextLabel={nextLabel}
       onNext={onNext}
       nextDisabled={!!why}
-      secondaryLabel={step === 'ready' ? 'Go to Home' : undefined}
-      onSecondary={step === 'ready' ? () => commitAccount('/dashboard') : undefined}
+      nextBusy={busy}
+      secondaryLabel={step === 'ready' ? 'Go to Owner Home' : undefined}
+      onSecondary={step === 'ready' ? () => router.push('/home') : undefined}
       cornerBadge={
         step === 'ready' ? (
           <span
@@ -378,40 +537,43 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
         ) : null
       }
     >
+      {errorMsg && (
+        <div
+          role="alert"
+          className="flex gap-2.5 py-3 px-3.5 rounded-[12px] bg-[#FDF0EF] text-[#B42318] max-w-[560px] text-[14px] leading-[1.5]"
+        >
+          <AlertTriangle className="w-[18px] h-[18px] shrink-0 mt-0.5" />
+          <span>{errorMsg}</span>
+        </div>
+      )}
+
       {/* STEP 1: PHONE */}
       {step === 'phone' && (
         <>
-          <div className="flex flex-col gap-1.5 max-w-[440px]">
-            <label htmlFor="ca-ph" className="text-[14px] font-semibold text-[#3D5357]">
-              Mobile number
-            </label>
-            <div
-              dir="ltr"
-              className={`field flex items-stretch h-[56px] rounded-[12px] bg-white overflow-hidden ${
-                taken ? 'border-2 border-[#B42318]' : 'border border-[#8A8276]'
-              }`}
-            >
-              <span className="shrink-0 px-3.5 flex items-center bg-[#FBF8F4] border-r border-[#E7E0D7] text-[18px] font-semibold text-[#3D5357]">
-                +92
-              </span>
-              <input
-                id="ca-ph"
-                type="tel"
-                inputMode="numeric"
-                autoComplete="tel-national"
-                value={phone}
-                onChange={(e) => {
-                  setPhone(e.target.value.replace(/[^\d ]/g, '').slice(0, 12));
-                  setTaken(false);
-                }}
-                placeholder="300 1234567"
-                className="flex-1 min-w-0 border-0 outline-none px-3.5 text-[20px] font-semibold tracking-[0.02em] bg-transparent text-[#0B2A2F]"
-              />
-            </div>
-            <span className="text-[14px] leading-[1.5] text-[#52666A]">
-              10 digits after +92, starting with 3
-            </span>
-          </div>
+          <PhoneInputField
+            id="ca-ph"
+            dialCode={dialCode}
+            onDialCodeChange={(nextDial) => {
+              setDialCode(nextDial);
+              const match = COUNTRY_OPTIONS.find((c) => c.dialCode === nextDial);
+              if (match) {
+                setCountryCode(match.code);
+                setCurrency(match.currency);
+              }
+              setTaken(false);
+              setErrorMsg(null);
+            }}
+            value={phone}
+            onChange={(val) => {
+              setPhone(val);
+              setTaken(false);
+              setErrorMsg(null);
+            }}
+            hasError={taken}
+            onEnter={() => {
+              if (!why && !busy) void handleRequestOtp(false);
+            }}
+          />
 
           <div className="flex flex-col gap-0.5">
             <label className="flex items-start gap-3 min-h-[44px] cursor-pointer">
@@ -425,13 +587,6 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
                 I agree to Zyro’s terms of use and privacy policy
               </span>
             </label>
-            <button
-              type="button"
-              onClick={() => notify('Terms and privacy open in a new tab', 'info')}
-              className="self-start h-[44px] ps-[34px] text-[#0E5E66] text-[14px] font-semibold underline underline-offset-[3px]"
-            >
-              Read them
-            </button>
           </div>
 
           {taken && (
@@ -443,7 +598,7 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
               <div className="flex-1 flex flex-col gap-2">
                 <strong className="text-[16px]">This number already has a Zyro account</strong>
                 <span className="text-[14px] leading-[1.5]">
-                  Sign in with it to open your shop, or use another number for a new one.
+                  Sign in with it to open your shop, or use another number for a new business.
                 </span>
                 <Link
                   href="/sign-in"
@@ -457,7 +612,7 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
         </>
       )}
 
-      {/* STEP 2: SMS CODE */}
+      {/* STEP 2: OTP VERIFICATION */}
       {step === 'code' && (
         <>
           <div className="flex items-center gap-2.5 flex-wrap">
@@ -470,16 +625,21 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
             </span>
             <button
               type="button"
-              onClick={() => setStep('phone')}
+              onClick={() => {
+                setErrorMsg(null);
+                setStep('phone');
+              }}
               className="h-[44px] px-1.5 text-[#0E5E66] text-[14px] font-semibold hover:underline"
             >
               Change number
             </button>
           </div>
 
+          <DevOtpNotice devOtp={devOtp} onUseCode={(val) => setCode(val)} />
+
           <div className="flex flex-col gap-1.5 max-w-[360px]">
             <label htmlFor="ca-code" className="text-[14px] font-semibold text-[#3D5357]">
-              6-digit code
+              6-digit verification code
             </label>
             <input
               id="ca-code"
@@ -491,38 +651,35 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
               value={code}
               onChange={(e) => {
                 setCode(e.target.value.replace(/\D/g, '').slice(0, 6));
-                setCodeBad(false);
+                setErrorMsg(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && codeOk && !busy) void handleVerifyOtp();
               }}
               placeholder="••••••"
               className={`field h-[64px] rounded-[12px] bg-white px-[18px] mono text-[30px] font-medium tracking-[0.4em] text-[#0B2A2F] text-center ${
-                codeBad ? 'border-2 border-[#B42318]' : 'border border-[#8A8276]'
+                errorMsg ? 'border-2 border-[#B42318]' : 'border border-[#8A8276]'
               }`}
             />
-            <span
-              role={codeBad ? 'alert' : 'note'}
-              className={`text-[14px] leading-[1.5] ${codeBad ? 'text-[#B42318]' : 'text-[#52666A]'}`}
-            >
-              {codeBad
-                ? 'That code didn’t match. 4 tries left, then wait 15 minutes.'
-                : 'No SMS after a minute? Check the number, then send again. (Demo: 482913)'}
+            <span className="text-[14px] leading-[1.5] text-[#52666A]">
+              {otpExpirySeconds > 0
+                ? `Code expires in ${formatTimer(otpExpirySeconds)}. Up to 5 attempts allowed.`
+                : 'Code expired. Request a fresh code below.'}
             </span>
           </div>
 
           <button
             type="button"
-            onClick={() => {
-              setCode('482913');
-              setCodeBad(false);
-              notify('New 6-digit SMS code sent: 482913', 'info');
-            }}
-            className="bs self-start h-[44px] px-3.5 rounded-[12px] border border-[#E7E0D7] bg-white text-[14px] font-semibold"
+            disabled={resendCooldown > 0 || busy}
+            onClick={() => void handleRequestOtp(true)}
+            className="bs self-start h-[44px] px-3.5 rounded-[12px] border border-[#E7E0D7] bg-white text-[14px] font-semibold disabled:opacity-55"
           >
-            Send again
+            {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : 'Send new code'}
           </button>
         </>
       )}
 
-      {/* STEP 3: ABOUT YOU */}
+      {/* STEP 3: ABOUT YOU (FULL NAME + EMAIL + PASSWORD + CONFIRM PASSWORD) */}
       {step === 'you' && (
         <>
           <div className="flex flex-col gap-1.5 max-w-[440px]">
@@ -554,9 +711,6 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
               placeholder="name@yourshop.pk"
               className="field h-[52px] border border-[#8A8276] rounded-[12px] bg-white px-3.5 text-[17px] text-[#0B2A2F]"
             />
-            <span className="text-[14px] leading-[1.5] text-[#52666A]">
-              To reset your password if you change your number.
-            </span>
           </div>
 
           <div className="flex flex-col gap-1.5 max-w-[440px]">
@@ -566,7 +720,7 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
             <div
               dir="ltr"
               className={`field flex items-center h-[52px] rounded-[12px] bg-white overflow-hidden ${
-                pw && !pwOk ? 'border-2 border-[#B42318]' : 'border border-[#8A8276]'
+                pw && !pwValidation.valid ? 'border-2 border-[#B42318]' : 'border border-[#8A8276]'
               }`}
             >
               <input
@@ -586,11 +740,29 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
                 {pwShown ? 'Hide' : 'Show'}
               </button>
             </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5 max-w-[440px]">
+            <label htmlFor="ca-pw2" className="text-[14px] font-semibold text-[#3D5357]">
+              Confirm password
+            </label>
+            <input
+              id="ca-pw2"
+              dir="ltr"
+              type={pwShown ? 'text' : 'password'}
+              autoComplete="new-password"
+              value={confirmPw}
+              onChange={(e) => setConfirmPw(e.target.value)}
+              className={`field h-[52px] rounded-[12px] bg-white px-3.5 text-[17px] text-[#0B2A2F] ${
+                confirmPw && !pwMatch ? 'border-2 border-[#B42318]' : 'border border-[#8A8276]'
+              }`}
+            />
             <ul className="mt-1 p-0 list-none flex flex-col gap-1">
               {[
-                { ok: r1, text: '8 or more characters' },
-                { ok: r2, text: 'At least one number' },
-                { ok: r3, text: 'Not your phone number' },
+                { ok: pwValidation.minLengthOk, text: '8 or more characters' },
+                { ok: pwValidation.hasDigitOk, text: 'At least one number' },
+                { ok: pwValidation.notPhoneOk, text: 'Not your mobile number' },
+                { ok: pwMatch, text: 'Passwords match' },
               ].map((rule) => (
                 <li
                   key={rule.text}
@@ -610,13 +782,13 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
         </>
       )}
 
-      {/* STEP 4: YOUR SHOP + RECEIPT PREVIEW */}
+      {/* STEP 4: YOUR BUSINESS & FIRST BRANCH + RECEIPT PREVIEW */}
       {step === 'shop' && (
         <div className="flex gap-7 items-start flex-wrap">
           <div className="flex-1 min-w-[280px] max-w-[460px] flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               <label htmlFor="ca-sn" className="text-[14px] font-semibold text-[#3D5357]">
-                Shop name
+                Business / shop name
               </label>
               <input
                 id="ca-sn"
@@ -626,6 +798,54 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
                 onChange={(e) => setShop(e.target.value)}
                 placeholder="Stride Footwear"
                 className="field h-[52px] border border-[#8A8276] rounded-[12px] bg-white px-3.5 text-[17px] text-[#0B2A2F]"
+              />
+            </div>
+
+            <div className="flex gap-3">
+              <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+                <label htmlFor="ca-br" className="text-[14px] font-semibold text-[#3D5357]">
+                  First branch name
+                </label>
+                <input
+                  id="ca-br"
+                  type="text"
+                  value={branchName}
+                  onChange={(e) => setBranchName(e.target.value)}
+                  placeholder="Main branch"
+                  className="field h-[52px] border border-[#8A8276] rounded-[12px] bg-white px-3.5 text-[16px] text-[#0B2A2F]"
+                />
+              </div>
+              <div className="w-[120px] shrink-0 flex flex-col gap-1.5">
+                <label htmlFor="ca-cur" className="text-[14px] font-semibold text-[#3D5357]">
+                  Currency
+                </label>
+                <select
+                  id="ca-cur"
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value)}
+                  className="field h-[52px] border border-[#8A8276] rounded-[12px] bg-white px-3 text-[16px] font-semibold text-[#0B2A2F]"
+                >
+                  {SUPPORTED_CURRENCIES.map((cur) => (
+                    <option key={cur} value={cur}>
+                      {cur}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="ca-bph" className="text-[14px] font-semibold text-[#3D5357]">
+                Business phone · on receipts
+              </label>
+              <input
+                id="ca-bph"
+                dir="ltr"
+                type="tel"
+                value={businessPhone}
+                onChange={(e) => setBusinessPhone(e.target.value)}
+                placeholder={phoneFormatted}
+                className="field h-[52px] border border-[#8A8276] rounded-[12px] bg-white px-3.5 text-[16px] text-[#0B2A2F]"
               />
             </div>
 
@@ -649,7 +869,7 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
               </div>
               <div className="flex-[1.3] min-w-0 flex flex-col gap-1.5">
                 <label htmlFor="ca-ar" className="text-[14px] font-semibold text-[#3D5357]">
-                  Market or area · optional
+                  Address or market · optional
                 </label>
                 <input
                   id="ca-ar"
@@ -657,7 +877,7 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
                   autoComplete="address-line1"
                   value={area}
                   onChange={(e) => setArea(e.target.value)}
-                  placeholder="Liberty Market"
+                  placeholder="Liberty Market, Gulberg"
                   className="field h-[52px] border border-[#8A8276] rounded-[12px] bg-white px-3.5 text-[17px] text-[#0B2A2F]"
                 />
               </div>
@@ -709,7 +929,7 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
                 })}
               </div>
               <span className="text-[14px] text-[#52666A]">
-                You start with the main branch. Add the others in Settings.
+                You start with {branchName.trim() || 'Main branch'}. Add additional branches in Settings.
               </span>
             </div>
 
@@ -728,7 +948,7 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
               <span className="flex-1 flex flex-col gap-0.5">
                 <span className="text-[14px] font-semibold text-[#3D5357]">Logo · optional</span>
                 <span className="text-[14px] text-[#52666A]">
-                  {hasLogo ? 'logo.png · on receipts and labels' : 'A letter stands in until you add one'}
+                  {hasLogo ? 'Monogram badge on receipts and labels' : 'A letter stands in until you upload one'}
                 </span>
               </span>
               <button
@@ -756,18 +976,15 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
                 </span>
               )}
               <span className="font-sans text-[17px] font-bold">{shopName}</span>
+              <span className="text-[12px] text-[#555555]">{branchName.trim() || 'Main branch'}</span>
               <span className="text-[12px] text-[#555555]">
                 {(area.trim() ? `${area.trim()}, ` : '') + cityShown}
               </span>
-              <span className="text-[12px] text-[#555555]">{phoneFormatted}</span>
+              <span className="text-[12px] text-[#555555]">{businessPhone || phoneFormatted}</span>
               <span className="w-full border-t border-dashed border-[#9A9A9A] mt-2.5 mb-1.5" />
               <span className="w-full flex justify-between text-[12px] text-[#555555]">
                 <span>Bill 1</span>
-                <span>14 Nov 2026</span>
-              </span>
-              <span className="w-full flex justify-between text-[12px] text-[#555555]">
-                <span>…</span>
-                <span>…</span>
+                <span>{currency}</span>
               </span>
             </div>
           </figure>
@@ -891,9 +1108,9 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
         <div className="flex flex-col gap-4">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
             {[
-              ['Owner', name.trim() || 'Hamza Sheikh'],
+              ['Owner', name.trim()],
               ['Shop', shopName],
-              ['City', cityShown + (area.trim() ? ` · ${area.trim()}` : '')],
+              ['First branch', `${branchName.trim() || 'Main branch'} · ${cityShown}`],
               ['Sells', kitMeta.name],
             ].map(([k, v]) => (
               <div
@@ -913,7 +1130,7 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
                 <li key={nx.n}>
                   <button
                     type="button"
-                    onClick={() => commitAccount(nx.href)}
+                    onClick={() => router.push(nx.href)}
                     className="w-full min-h-[64px] flex items-center gap-3.5 py-2.5 px-3.5 rounded-[14px] text-[#0B2A2F] text-start transition-colors hover:border-[#E2B48F]"
                     style={{
                       border: nx.hi ? '2px solid #C9682E' : '1px solid #E7E0D7',

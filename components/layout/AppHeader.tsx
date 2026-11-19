@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import { Dropdown } from '@/components/ui/Dropdown';
 import { ROLE_DISPLAY_NAMES } from '@/constants/navigation';
+import { SignOutConfirmModal } from '@/features/auth/components/SignOutConfirmModal';
+import { useAuth } from '@/features/auth/hooks/useAuth';
 import { useZyro } from '@/hooks/useZyro';
 import { formatPhone, formatRs } from '@/lib/format';
 import { calcBillTotal, getTotalStock } from '@/lib/inventory';
@@ -27,9 +29,11 @@ import type { LanguageId, RoleId } from '@/types';
 
 export function AppHeader({ isPhone }: { isPhone: boolean }) {
   const router = useRouter();
+  const auth = useAuth();
   const { state, role, user, settings, lang, setLanguage, setBranch, setRole, signOut, notify, t } =
     useZyro();
   const [query, setQuery] = useState('');
+  const [signOutOpen, setSignOutOpen] = useState(false);
 
   const activeBranch =
     state.session.branches.find((b) => b.id === state.session.branchId) ||
@@ -77,161 +81,181 @@ export function AppHeader({ isPhone }: { isPhone: boolean }) {
     router.push('/dashboard');
   };
 
+  const confirmSignOut = async () => {
+    setSignOutOpen(false);
+    await auth.signOut();
+    signOut();
+    notify('Signed out', 'info');
+    router.push('/welcome');
+  };
+
+  const activeRoleLabel = auth.activeMembership?.roleDisplayName || ROLE_DISPLAY_NAMES[role];
+
   if (isPhone) {
     return (
-      <header className="h-[56px] shrink-0 bg-[#08343A] text-white px-2 ps-3 flex items-center gap-2 relative z-30">
-        <div
-          role="img"
-          aria-label="Zyro"
-          className="w-[34px] h-[34px] rounded-[10px] bg-[#E58A4E] text-[#08343A] font-display font-bold text-[17px] leading-none flex items-center justify-center shrink-0"
-        >
-          Z
-        </div>
-
-        <Dropdown
-          align="start"
-          header={
-            <div>
-              <div className="font-semibold text-[13px] text-[#0B2A2F]">{state.session.shopName}</div>
-              <div className="text-[11px] text-[#52666A]">Switch active branch</div>
-            </div>
-          }
-          trigger={
-            <button
-              type="button"
-              className="flex-1 min-w-0 h-[44px] flex items-center gap-1 px-1 text-start text-white"
-            >
-              <span className="min-w-0 flex flex-col leading-[1.25]">
-                <span className="text-[15px] font-bold truncate">{state.session.shopName}</span>
-                <span className="text-[12px] text-[#A8C3C5] truncate">
-                  {activeBranch.name} · {settings.offlineModeSimulated ? 'offline' : 'synced'}
-                </span>
-              </span>
-              <ChevronDown className="w-3.5 h-3.5 text-[#A8C3C5] shrink-0" />
-            </button>
-          }
-          items={state.session.branches.map((b) => ({
-            id: b.id,
-            label: b.name,
-            sub: b.city,
-            icon:
-              b.id === state.session.branchId ? (
-                <Check className="w-4 h-4 text-[#C9682E]" />
-              ) : (
-                <MapPin className="w-4 h-4 text-[#52666A]" />
-              ),
-            active: b.id === state.session.branchId,
-            onSelect: () => {
-              setBranch(b.id);
-              notify(`Switched to ${b.name}`, 'info');
-            },
-          }))}
-        />
-
-        <div className="flex-1" />
-
-        {role === 'owner' && (
-          <button
-            type="button"
-            onClick={() => router.push('/dashboard')}
-            aria-label={`${pendingCount} waiting for review`}
-            className="w-[44px] h-[44px] rounded-full bg-white/8 flex items-center justify-center relative shrink-0"
+      <>
+        <header className="h-[56px] shrink-0 bg-[#08343A] text-white px-2 ps-3 flex items-center gap-2 relative z-30">
+          <div
+            role="img"
+            aria-label="Zyro"
+            className="w-[34px] h-[34px] rounded-[10px] bg-[#E58A4E] text-[#08343A] font-display font-bold text-[17px] leading-none flex items-center justify-center shrink-0"
           >
-            <Bell className="w-5 h-5 text-white" />
-            {pendingCount > 0 && (
-              <span className="num absolute top-0 end-0 min-w-[18px] h-[18px] px-1 rounded-full bg-[#E58A4E] text-[#08343A] text-[12px] font-bold flex items-center justify-center">
-                {pendingCount}
-              </span>
-            )}
-          </button>
-        )}
+            Z
+          </div>
 
-        <Dropdown
-          align="end"
-          header={
-            <div>
-              <div className="font-semibold text-[14px] text-[#0B2A2F]">{user.name}</div>
-              <div className="text-[12px] text-[#52666A]">{ROLE_DISPLAY_NAMES[role]}</div>
-              <div className="mt-2 grid grid-cols-3 gap-1 p-0.5 rounded-[8px] bg-[#EAE3D9]">
-                {(
-                  [
-                    { id: 'en', label: 'EN' },
-                    { id: 'roman', label: 'Roman' },
-                    { id: 'ur', label: 'اردو' },
-                  ] as { id: LanguageId; label: string }[]
-                ).map((opt) => (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => setLanguage(opt.id)}
-                    className={`h-[26px] rounded-[6px] text-[11px] font-semibold ${
-                      lang === opt.id ? 'bg-white text-[#0B2A2F]' : 'text-[#3D5357]'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
+          <Dropdown
+            align="start"
+            header={
+              <div>
+                <div className="font-semibold text-[13px] text-[#0B2A2F]">{state.session.shopName}</div>
+                <div className="text-[11px] text-[#52666A]">Switch active branch</div>
               </div>
-            </div>
-          }
-          trigger={
+            }
+            trigger={
+              <button
+                type="button"
+                className="flex-1 min-w-0 h-[44px] flex items-center gap-1 px-1 text-start text-white"
+              >
+                <span className="min-w-0 flex flex-col leading-[1.25]">
+                  <span className="text-[15px] font-bold truncate">{state.session.shopName}</span>
+                  <span className="text-[12px] text-[#A8C3C5] truncate">
+                    {activeBranch.name} · {settings.offlineModeSimulated ? 'offline' : 'synced'}
+                  </span>
+                </span>
+                <ChevronDown className="w-3.5 h-3.5 text-[#A8C3C5] shrink-0" />
+              </button>
+            }
+            items={state.session.branches.map((b) => ({
+              id: b.id,
+              label: b.name,
+              sub: b.city,
+              icon:
+                b.id === state.session.branchId ? (
+                  <Check className="w-4 h-4 text-[#C9682E]" />
+                ) : (
+                  <MapPin className="w-4 h-4 text-[#52666A]" />
+                ),
+              active: b.id === state.session.branchId,
+              onSelect: () => {
+                setBranch(b.id);
+                notify(`Switched to ${b.name}`, 'info');
+              },
+            }))}
+          />
+
+          <div className="flex-1" />
+
+          {role === 'owner' && (
             <button
               type="button"
-              aria-label={`Staff menu · ${user.name}`}
-              className="w-[44px] h-[44px] rounded-full flex items-center justify-center shrink-0"
+              onClick={() => router.push('/dashboard')}
+              aria-label={`${pendingCount} waiting for review`}
+              className="w-[44px] h-[44px] rounded-full bg-white/8 flex items-center justify-center relative shrink-0"
             >
-              <span
-                style={{ backgroundColor: user.avatarBg, color: user.avatarFg }}
-                className="w-[34px] h-[34px] rounded-full text-[13px] font-bold flex items-center justify-center"
-              >
-                {user.initials}
-              </span>
+              <Bell className="w-5 h-5 text-white" />
+              {pendingCount > 0 && (
+                <span className="num absolute top-0 end-0 min-w-[18px] h-[18px] px-1 rounded-full bg-[#E58A4E] text-[#08343A] text-[12px] font-bold flex items-center justify-center">
+                  {pendingCount}
+                </span>
+              )}
             </button>
-          }
-          items={[
-            {
-              id: 'role-owner',
-              label: 'View as Owner',
-              sub: 'Hamza Sheikh',
-              icon: role === 'owner' ? <Check className="w-4 h-4 text-[#C9682E]" /> : <ShieldCheck className="w-4 h-4" />,
-              active: role === 'owner',
-              onSelect: () => switchRoleTo('owner'),
-            },
-            {
-              id: 'role-cashier',
-              label: 'View as Cashier',
-              sub: 'Ali Hassan',
-              icon: role === 'cashier' ? <Check className="w-4 h-4 text-[#C9682E]" /> : <User className="w-4 h-4" />,
-              active: role === 'cashier',
-              onSelect: () => switchRoleTo('cashier'),
-            },
-            {
-              id: 'role-inventory',
-              label: 'View as Stockkeeper',
-              sub: 'Faraz Ahmed',
-              icon: role === 'inventory' ? <Check className="w-4 h-4 text-[#C9682E]" /> : <Boxes className="w-4 h-4" />,
-              active: role === 'inventory',
-              onSelect: () => switchRoleTo('inventory'),
-            },
-            {
-              id: 'counter-pin',
-              label: 'Counter PIN sign-in',
-              icon: <RefreshCw className="w-4 h-4" />,
-              onSelect: () => router.push('/counter-sign-in'),
-            },
-            {
-              id: 'sign-out',
-              label: t('signOut'),
-              icon: <LogOut className="w-4 h-4" />,
-              danger: true,
-              onSelect: () => {
-                signOut();
-                router.push('/welcome');
+          )}
+
+          <Dropdown
+            align="end"
+            header={
+              <div>
+                <div className="font-semibold text-[14px] text-[#0B2A2F]">{user.name}</div>
+                <div className="text-[12px] text-[#52666A]">{activeRoleLabel}</div>
+                <div className="mt-2 grid grid-cols-3 gap-1 p-0.5 rounded-[8px] bg-[#EAE3D9]">
+                  {(
+                    [
+                      { id: 'en', label: 'EN' },
+                      { id: 'roman', label: 'Roman' },
+                      { id: 'ur', label: 'اردو' },
+                    ] as { id: LanguageId; label: string }[]
+                  ).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setLanguage(opt.id)}
+                      className={`h-[26px] rounded-[6px] text-[11px] font-semibold ${
+                        lang === opt.id ? 'bg-white text-[#0B2A2F]' : 'text-[#3D5357]'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            }
+            trigger={
+              <button
+                type="button"
+                aria-label={`Staff menu · ${user.name}`}
+                className="w-[44px] h-[44px] rounded-full flex items-center justify-center shrink-0"
+              >
+                <span
+                  style={{ backgroundColor: user.avatarBg, color: user.avatarFg }}
+                  className="w-[34px] h-[34px] rounded-full text-[13px] font-bold flex items-center justify-center"
+                >
+                  {user.initials}
+                </span>
+              </button>
+            }
+            items={[
+              ...(!auth.configured
+                ? [
+                    {
+                      id: 'role-owner',
+                      label: 'View as Owner',
+                      sub: 'Hamza Sheikh',
+                      icon: role === 'owner' ? <Check className="w-4 h-4 text-[#C9682E]" /> : <ShieldCheck className="w-4 h-4" />,
+                      active: role === 'owner',
+                      onSelect: () => switchRoleTo('owner'),
+                    },
+                    {
+                      id: 'role-cashier',
+                      label: 'View as Cashier',
+                      sub: 'Ali Hassan',
+                      icon: role === 'cashier' ? <Check className="w-4 h-4 text-[#C9682E]" /> : <User className="w-4 h-4" />,
+                      active: role === 'cashier',
+                      onSelect: () => switchRoleTo('cashier'),
+                    },
+                    {
+                      id: 'role-inventory',
+                      label: 'View as Stockkeeper',
+                      sub: 'Faraz Ahmed',
+                      icon: role === 'inventory' ? <Check className="w-4 h-4 text-[#C9682E]" /> : <Boxes className="w-4 h-4" />,
+                      active: role === 'inventory',
+                      onSelect: () => switchRoleTo('inventory'),
+                    },
+                  ]
+                : []),
+              {
+                id: 'counter-pin',
+                label: 'Counter PIN sign-in',
+                icon: <RefreshCw className="w-4 h-4" />,
+                onSelect: () => router.push('/counter-sign-in'),
               },
-            },
-          ]}
+              {
+                id: 'sign-out',
+                label: t('signOut'),
+                icon: <LogOut className="w-4 h-4" />,
+                danger: true,
+                onSelect: () => setSignOutOpen(true),
+              },
+            ]}
+          />
+        </header>
+        <SignOutConfirmModal
+          open={signOutOpen}
+          userName={user.name}
+          shopName={state.session.shopName}
+          onCancel={() => setSignOutOpen(false)}
+          onConfirm={confirmSignOut}
         />
-      </header>
+      </>
     );
   }
 

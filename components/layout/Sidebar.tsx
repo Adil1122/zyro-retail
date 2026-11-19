@@ -28,6 +28,8 @@ import {
   Users,
 } from 'lucide-react';
 import { ROLE_DISPLAY_NAMES, type NavItemConfig } from '@/constants/navigation';
+import { SignOutConfirmModal } from '@/features/auth/components/SignOutConfirmModal';
+import { useAuth } from '@/features/auth/hooks/useAuth';
 import { useZyro } from '@/hooks/useZyro';
 import { getAllowedNavItems } from '@/lib/permissions';
 import type { LanguageId, RoleId } from '@/types';
@@ -64,10 +66,12 @@ export function NavIcon({ icon, className = 'w-[17px] h-[17px]' }: { icon: NavIt
 export function Sidebar({ mode }: { mode: 'desk' | 'tablet' }) {
   const pathname = usePathname();
   const router = useRouter();
+  const auth = useAuth();
   const { role, user, session, lang, setLanguage, setBranch, setRole, signOut, notify, t } = useZyro();
   const [branchMenu, setBranchMenu] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [staffMenu, setStaffMenu] = useState(false);
+  const [signOutOpen, setSignOutOpen] = useState(false);
   const asideRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -94,7 +98,7 @@ export function Sidebar({ mode }: { mode: 'desk' | 'tablet' }) {
     };
   }, [branchMenu, moreOpen, staffMenu]);
 
-  const allowed = getAllowedNavItems(role);
+  const allowed = getAllowedNavItems(role, auth.configured ? auth.permissions : undefined);
   const mainNav = allowed.filter((n) => n.group === 'main');
   const officeNav = allowed.filter((n) => n.group === 'office');
   const footNav = allowed.filter((n) => n.group === 'foot');
@@ -106,7 +110,15 @@ export function Sidebar({ mode }: { mode: 'desk' | 'tablet' }) {
   );
 
   const isActive = (n: NavItemConfig) => {
-    if (n.href === '/dashboard') return pathname === '/' || pathname === '/dashboard';
+    if (n.href === '/dashboard') {
+      return (
+        pathname === '/' ||
+        pathname === '/dashboard' ||
+        pathname === '/home' ||
+        pathname === '/cashier/home' ||
+        pathname === '/stockkeeper/home'
+      );
+    }
     if (n.href === '/pos/bills') return pathname.startsWith('/pos/bills') || pathname.startsWith('/pos/printer');
     if (n.href === '/pos') return pathname === '/pos' || (pathname.startsWith('/pos/') && !pathname.startsWith('/pos/bills') && !pathname.startsWith('/pos/printer'));
     return pathname === n.href || pathname.startsWith(n.href + '/');
@@ -119,6 +131,20 @@ export function Sidebar({ mode }: { mode: 'desk' | 'tablet' }) {
     router.push('/dashboard');
   };
 
+  const activeRoleLabel = auth.activeMembership?.roleDisplayName || ROLE_DISPLAY_NAMES[role];
+  const hasMultipleWorkspaces =
+    auth.configured &&
+    auth.session.memberships.filter((m) => m.memberStatus === 'active' && m.businessStatus === 'active').length > 1;
+
+  const confirmSignOut = async () => {
+    setSignOutOpen(false);
+    setStaffMenu(false);
+    await auth.signOut();
+    signOut();
+    notify('Signed out', 'info');
+    router.push('/welcome');
+  };
+
   const staffMenuPopover = staffMenu && (
     <div
       role="dialog"
@@ -129,7 +155,7 @@ export function Sidebar({ mode }: { mode: 'desk' | 'tablet' }) {
     >
       <div className="px-2.5 py-2 border-b border-[#F1EBE3]">
         <div className="text-[14px] font-bold text-[#0B2A2F]">{user.name}</div>
-        <div className="text-[12px] text-[#52666A]">{ROLE_DISPLAY_NAMES[role]} · {activeBranch.name}</div>
+        <div className="text-[12px] text-[#52666A]">{activeRoleLabel} · {activeBranch.name}</div>
       </div>
 
       {/* Language switcher */}
@@ -161,38 +187,53 @@ export function Sidebar({ mode }: { mode: 'desk' | 'tablet' }) {
         </div>
       </div>
 
-      {/* Role switcher */}
-      <div className="py-1.5 border-b border-[#F1EBE3]">
-        <div className="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-[#52666A]">
-          Switch role
+      {/* Role switcher (only available in unconfigured local preview mode; live auth enforces DB roles) */}
+      {!auth.configured && (
+        <div className="py-1.5 border-b border-[#F1EBE3]">
+          <div className="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-[#52666A]">
+            Switch role
+          </div>
+          {(
+            [
+              { id: 'owner', label: 'Owner', sub: 'Hamza Sheikh', icon: <ShieldCheck className="w-4 h-4" /> },
+              { id: 'cashier', label: 'Cashier', sub: 'Ali Hassan', icon: <User className="w-4 h-4" /> },
+              { id: 'inventory', label: 'Stockkeeper', sub: 'Faraz Ahmed', icon: <Boxes className="w-4 h-4" /> },
+            ] as { id: RoleId; label: string; sub: string; icon: React.ReactNode }[]
+          ).map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              onClick={() => switchRoleTo(r.id)}
+              className={`w-full px-2.5 py-2 rounded-[10px] text-start text-[13px] flex items-center justify-between gap-2 ${
+                role === r.id ? 'bg-[#FCEFE4] text-[#8A3D12] font-semibold' : 'hover:bg-[#F8F4EF]'
+              }`}
+            >
+              <span className="flex items-center gap-2 min-w-0">
+                {r.icon}
+                <span className="truncate">{r.label}</span>
+                <span className="text-[11px] text-[#52666A] font-normal">· {r.sub}</span>
+              </span>
+              {role === r.id && <Check className="w-4 h-4 text-[#C9682E] shrink-0" />}
+            </button>
+          ))}
         </div>
-        {(
-          [
-            { id: 'owner', label: 'Owner', sub: 'Hamza Sheikh', icon: <ShieldCheck className="w-4 h-4" /> },
-            { id: 'cashier', label: 'Cashier', sub: 'Ali Hassan', icon: <User className="w-4 h-4" /> },
-            { id: 'inventory', label: 'Stockkeeper', sub: 'Faraz Ahmed', icon: <Boxes className="w-4 h-4" /> },
-          ] as { id: RoleId; label: string; sub: string; icon: React.ReactNode }[]
-        ).map((r) => (
-          <button
-            key={r.id}
-            type="button"
-            onClick={() => switchRoleTo(r.id)}
-            className={`w-full px-2.5 py-2 rounded-[10px] text-start text-[13px] flex items-center justify-between gap-2 ${
-              role === r.id ? 'bg-[#FCEFE4] text-[#8A3D12] font-semibold' : 'hover:bg-[#F8F4EF]'
-            }`}
-          >
-            <span className="flex items-center gap-2 min-w-0">
-              {r.icon}
-              <span className="truncate">{r.label}</span>
-              <span className="text-[11px] text-[#52666A] font-normal">· {r.sub}</span>
-            </span>
-            {role === r.id && <Check className="w-4 h-4 text-[#C9682E] shrink-0" />}
-          </button>
-        ))}
-      </div>
+      )}
 
       {/* Actions */}
       <div className="pt-1.5 space-y-0.5">
+        {hasMultipleWorkspaces && (
+          <button
+            type="button"
+            onClick={() => {
+              setStaffMenu(false);
+              router.push('/select-workspace');
+            }}
+            className="w-full px-2.5 py-2 rounded-[10px] text-start text-[13px] font-medium hover:bg-[#F8F4EF] flex items-center gap-2"
+          >
+            <LayoutGrid className="w-4 h-4 text-[#3D5357]" />
+            <span>Switch business</span>
+          </button>
+        )}
         <button
           type="button"
           onClick={() => {
@@ -208,8 +249,7 @@ export function Sidebar({ mode }: { mode: 'desk' | 'tablet' }) {
           type="button"
           onClick={() => {
             setStaffMenu(false);
-            signOut();
-            router.push('/welcome');
+            setSignOutOpen(true);
           }}
           className="w-full px-2.5 py-2 rounded-[10px] text-start text-[13px] font-semibold text-[#B42318] hover:bg-[#FDF0EF] flex items-center gap-2"
         >
@@ -218,6 +258,16 @@ export function Sidebar({ mode }: { mode: 'desk' | 'tablet' }) {
         </button>
       </div>
     </div>
+  );
+
+  const signOutModal = (
+    <SignOutConfirmModal
+      open={signOutOpen}
+      userName={user.name}
+      shopName={session.shopName}
+      onCancel={() => setSignOutOpen(false)}
+      onConfirm={confirmSignOut}
+    />
   );
 
   if (mode === 'tablet') {
@@ -355,6 +405,7 @@ export function Sidebar({ mode }: { mode: 'desk' | 'tablet' }) {
         )}
 
         {staffMenuPopover}
+        {signOutModal}
       </aside>
     );
   }
@@ -534,13 +585,14 @@ export function Sidebar({ mode }: { mode: 'desk' | 'tablet' }) {
         <span className="flex-1 min-w-0 flex flex-col leading-[1.3]">
           <span className="text-[15px] font-semibold truncate">{user.name}</span>
           <span className="text-[13px] text-[#A8C3C5] truncate">
-            {ROLE_DISPLAY_NAMES[role]}
+            {activeRoleLabel}
           </span>
         </span>
         <MoreHorizontal className="w-4 h-4 text-[#A8C3C5] shrink-0" />
       </button>
 
       {staffMenuPopover}
+      {signOutModal}
     </aside>
   );
 }
