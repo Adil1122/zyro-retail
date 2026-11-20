@@ -39,6 +39,7 @@ export interface CheckoutPaymentEntry {
 
 export function TenderScreen({
   subtotal,
+  offerSavings = 0,
   discountAmt,
   taxAmt = 0,
   total,
@@ -51,6 +52,7 @@ export function TenderScreen({
   onComplete,
 }: {
   subtotal: number;
+  offerSavings?: number;
   discountAmt: number;
   taxAmt?: number;
   total: number;
@@ -481,6 +483,7 @@ export function TenderScreen({
         <div className="lg:col-span-5 space-y-4">
           <PaymentSummary
             subtotal={subtotal}
+            offerSavings={offerSavings}
             discountAmt={discountAmt}
             taxAmt={taxAmt}
             total={total}

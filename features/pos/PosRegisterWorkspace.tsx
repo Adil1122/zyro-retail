@@ -15,6 +15,7 @@ import {
   RotateCcw,
   ScanBarcode,
   ShoppingBag,
+  Tag,
   Trash2,
   UserPlus,
 } from 'lucide-react';
@@ -37,6 +38,8 @@ import { formatRs } from '@/lib/format';
 import { calcDiscountAmount } from '@/lib/inventory';
 import type { BillDiscount } from '@/types';
 import {
+  computeCartOfferDiscounts,
+  formatOfferCustomerText,
   formatVariantDisplay,
   type FootwearProductRecord,
   type FootwearVariantRecord,
@@ -154,9 +157,33 @@ export function PosRegisterWorkspace() {
     return out;
   }, [cart]);
 
+  const offerBreakdown = useMemo(
+    () =>
+      computeCartOfferDiscounts(
+        cart.map((l) => ({
+          key: l.key,
+          productId: l.productId,
+          qty: l.qty,
+          price: l.price,
+          offer: l.offer,
+        })),
+      ),
+    [cart],
+  );
+
+  const totalOfferSavings = useMemo(
+    () =>
+      cart.reduce((s, l) => s + (offerBreakdown[l.key]?.offerDiscount ?? 0), 0),
+    [cart, offerBreakdown],
+  );
+
   const subtotal = useMemo(
-    () => cart.reduce((s, l) => s + Math.max(0, l.price * l.qty - l.lineDiscount), 0),
-    [cart]
+    () =>
+      cart.reduce((s, l) => {
+        const offerDisc = offerBreakdown[l.key]?.offerDiscount ?? 0;
+        return s + Math.max(0, l.price * l.qty - l.lineDiscount - offerDisc);
+      }, 0),
+    [cart, offerBreakdown],
   );
   const discountAmt = useMemo(
     () => calcDiscountAmount(cartDiscount, subtotal),
@@ -166,7 +193,8 @@ export function PosRegisterWorkspace() {
   const itemCount = useMemo(() => cart.reduce((s, l) => s + l.qty, 0), [cart]);
 
   const addVariantToCart = useCallback(
-    (variant: FootwearVariantRecord, product: FootwearProductRecord) => {
+    (variant: FootwearVariantRecord, product: FootwearProductRecord, addQty = 1) => {
+      const qtyToAdd = Math.max(1, Math.floor(addQty));
       const displayLabel = formatVariantDisplay(
         variant.colourName,
         variant.sizeName,
@@ -184,15 +212,24 @@ export function PosRegisterWorkspace() {
       setCart((prev) => {
         const existing = prev.find((l) => l.variantId === variant.id);
         if (existing) {
-          if (existing.qty + 1 > variant.availableStock) {
+          if (existing.qty + qtyToAdd > variant.availableStock) {
             notify(`Only ${variant.availableStock} in stock for ${variant.sku}`, 'warn');
             return prev;
           }
           return prev.map((l) =>
             l.variantId === variant.id
-              ? { ...l, qty: l.qty + 1, availableStock: variant.availableStock }
+              ? {
+                  ...l,
+                  qty: l.qty + qtyToAdd,
+                  availableStock: variant.availableStock,
+                  offer: product.offer ?? l.offer ?? null,
+                }
               : l
           );
+        }
+        if (qtyToAdd > variant.availableStock) {
+          notify(`Only ${variant.availableStock} in stock for ${variant.sku}`, 'warn');
+          return prev;
         }
         const nextLine: FootwearCartLine = {
           key: variant.id,
@@ -210,13 +247,19 @@ export function PosRegisterWorkspace() {
           barcode: variant.primaryBarcode,
           price: variant.sellingPrice,
           originalPrice: variant.sellingPrice,
-          qty: 1,
+          qty: qtyToAdd,
           availableStock: variant.availableStock,
           lineDiscount: 0,
+          offer: product.offer ?? null,
         };
         return [...prev, nextLine];
       });
-      notify(`Added ${product.name} (${displayLabel})`, 'ok');
+      notify(
+        qtyToAdd > 1
+          ? `Added ${qtyToAdd} × ${product.name} (${displayLabel})`
+          : `Added ${product.name} (${displayLabel})`,
+        'ok',
+      );
     },
     [notify]
   );
@@ -406,6 +449,7 @@ export function PosRegisterWorkspace() {
         qty: Math.min(item.qty, Math.max(1, liveAvail)),
         availableStock: liveAvail,
         lineDiscount: item.lineDiscount || 0,
+        offer: product?.offer ?? null,
         note: item.note,
       };
     });
@@ -490,6 +534,7 @@ export function PosRegisterWorkspace() {
       <>
         <TenderScreen
           subtotal={subtotal}
+          offerSavings={totalOfferSavings}
           discountAmt={discountAmt}
           total={total}
           itemCount={itemCount}
@@ -587,51 +632,81 @@ export function PosRegisterWorkspace() {
             <div className="text-[13px]">Tap an item on the left or scan a barcode to start</div>
           </div>
         ) : (
-          cart.map((line) => (
-            <div key={line.key} className="py-3 flex items-center gap-3">
-              <ProductArtwork
-                artId={line.artId}
-                imageUrl={line.imageUrl}
-                alt={line.name}
-                size={42}
-              />
-              <button
-                type="button"
-                onClick={() => setEditLine(line)}
-                className="flex-1 min-w-0 text-start"
-              >
-                <div className="font-semibold text-[14px] text-[#0B2A2F] truncate">{line.name}</div>
-                <div className="text-[12px] text-[#52666A] truncate">
-                  {line.variantText} · <span className="mono">{line.sku}</span>
-                </div>
-                {line.lineDiscount > 0 && (
-                  <div className="text-[11px] font-semibold text-[#14532D]">
-                    Line discount −{formatRs(line.lineDiscount)}
+          cart.map((line) => {
+            const offerInfo = offerBreakdown[line.key];
+            const offerDisc = offerInfo?.offerDiscount ?? 0;
+            const grossLine = line.price * line.qty;
+            const netLine = Math.max(0, grossLine - line.lineDiscount - offerDisc);
+            const offerMsg = formatOfferCustomerText(line.price, line.offer, formatRs);
+
+            return (
+              <div key={line.key} className="py-3 flex items-center gap-3">
+                <ProductArtwork
+                  artId={line.artId}
+                  imageUrl={line.imageUrl}
+                  alt={line.name}
+                  size={42}
+                />
+                <button
+                  type="button"
+                  onClick={() => setEditLine(line)}
+                  className="flex-1 min-w-0 text-start"
+                >
+                  <div className="font-semibold text-[14px] text-[#0B2A2F] truncate">{line.name}</div>
+                  <div className="text-[12px] text-[#52666A] truncate">
+                    {line.variantText} · <span className="mono">{line.sku}</span>
                   </div>
-                )}
-              </button>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => updateCartLine(line.key, { qty: line.qty - 1 })}
-                  className="w-8 h-8 rounded-[8px] border border-[#D6CDC1] bg-[#FBF8F4] font-bold text-[#0B2A2F]"
-                >
-                  −
+                  {offerDisc > 0 && line.offer && (
+                    <div className="text-[11px] font-semibold text-[#14532D] flex items-center gap-1 mt-0.5">
+                      <Tag className="w-3 h-3 shrink-0" />
+                      <span>
+                        Offer applied ({line.offer.minQuantity} for {formatRs(line.offer.bundlePrice)}) · −
+                        {formatRs(offerDisc)}
+                      </span>
+                    </div>
+                  )}
+                  {offerDisc === 0 && offerMsg && offerInfo && offerInfo.remainingForNextBundle > 0 && (
+                    <div className="text-[11px] font-semibold text-[#8A3D12] flex items-center gap-1 mt-0.5">
+                      <Tag className="w-3 h-3 shrink-0 text-[#C9682E]" />
+                      <span className="truncate">
+                        {offerMsg} (add {offerInfo.remainingForNextBundle} more)
+                      </span>
+                    </div>
+                  )}
+                  {line.lineDiscount > 0 && (
+                    <div className="text-[11px] font-semibold text-[#14532D]">
+                      Line discount −{formatRs(line.lineDiscount)}
+                    </div>
+                  )}
                 </button>
-                <span className="w-6 text-center font-bold text-[14px] num">{line.qty}</span>
-                <button
-                  type="button"
-                  onClick={() => updateCartLine(line.key, { qty: line.qty + 1 })}
-                  className="w-8 h-8 rounded-[8px] border border-[#D6CDC1] bg-[#FBF8F4] font-bold text-[#0B2A2F]"
-                >
-                  +
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => updateCartLine(line.key, { qty: line.qty - 1 })}
+                    className="w-8 h-8 rounded-[8px] border border-[#D6CDC1] bg-[#FBF8F4] font-bold text-[#0B2A2F]"
+                  >
+                    −
+                  </button>
+                  <span className="w-6 text-center font-bold text-[14px] num">{line.qty}</span>
+                  <button
+                    type="button"
+                    onClick={() => updateCartLine(line.key, { qty: line.qty + 1 })}
+                    className="w-8 h-8 rounded-[8px] border border-[#D6CDC1] bg-[#FBF8F4] font-bold text-[#0B2A2F]"
+                  >
+                    +
+                  </button>
+                </div>
+                <div className="w-20 text-end num">
+                  {offerDisc > 0 && (
+                    <div className="text-[11px] text-[#52666A] line-through">
+                      {formatRs(Math.max(0, grossLine - line.lineDiscount))}
+                    </div>
+                  )}
+                  <div className="font-bold text-[14px] text-[#0B2A2F]">{formatRs(netLine)}</div>
+                </div>
               </div>
-              <div className="w-20 text-end font-bold text-[14px] num">
-                {formatRs(Math.max(0, line.price * line.qty - line.lineDiscount))}
-              </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
@@ -659,7 +734,13 @@ export function PosRegisterWorkspace() {
           </Button>
         </div>
 
-        <PaymentSummary subtotal={subtotal} discountAmt={discountAmt} total={total} itemCount={itemCount} />
+        <PaymentSummary
+          subtotal={subtotal}
+          offerSavings={totalOfferSavings}
+          discountAmt={discountAmt}
+          total={total}
+          itemCount={itemCount}
+        />
 
         <Button
           variant="primary"

@@ -15,6 +15,7 @@ import {
   Printer,
   RefreshCw,
   SlidersHorizontal,
+  Tag,
   Trash2,
 } from 'lucide-react';
 import { BarcodePreview } from '@/components/domain/BarcodePreview';
@@ -35,6 +36,7 @@ import { StatCard } from '@/components/ui/StatCard';
 import { Tabs } from '@/components/ui/Tabs';
 import { SWATCHES } from '@/constants/kits';
 import { useAuth } from '@/features/auth/hooks/useAuth';
+import { OffersModal } from '@/features/inventory/OffersModal';
 import {
   footwearInventoryService,
   type InventoryProductsResponse,
@@ -42,6 +44,7 @@ import {
 import { useZyro } from '@/hooks/useZyro';
 import { formatRs } from '@/lib/format';
 import {
+  formatOfferCustomerText,
   formatVariantDisplay,
   formatVariantSizeLabel,
   type FootwearCategoryRecord,
@@ -107,6 +110,8 @@ export function InventoryHub() {
 
   const [tagVariantId, setTagVariantId] = useState('');
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [offersOpen, setOffersOpen] = useState(false);
+  const [offersInitialProductId, setOffersInitialProductId] = useState<string | null>(null);
 
   const canManageStock = hasPermission('inventory.manage');
   const canManageCategories = hasPermission('inventory.categories') || canManageStock;
@@ -161,7 +166,7 @@ export function InventoryHub() {
     setErrorMsg(null);
     try {
       const stockFilterParam =
-        tab === 'low' ? 'low' : tab === 'out' ? 'out' : 'all';
+        tab === 'low' ? 'low' : tab === 'out' ? 'out' : tab === 'offered' ? 'offered' : 'all';
       const res = await footwearInventoryService.listProducts({
         branchId: branchId || undefined,
         q: query.trim() || undefined,
@@ -421,6 +426,21 @@ export function InventoryHub() {
             </Button>
             {canManageStock ? (
               <>
+                <Button
+                  variant="copperTint"
+                  size="lg"
+                  onClick={() => {
+                    setOffersInitialProductId(null);
+                    setOffersOpen(true);
+                  }}
+                >
+                  <Tag className="w-4 h-4" /> Offers
+                  {(summary?.offeredProducts ?? 0) > 0 && (
+                    <span className="ml-0.5 px-1.5 py-0.2 rounded-full bg-[#C9682E] text-white text-[11px] font-bold num">
+                      {summary?.offeredProducts}
+                    </span>
+                  )}
+                </Button>
                 {canManageCategories && (
                   <Link href="/inventory/categories">
                     <Button variant="secondary" size="lg">
@@ -495,6 +515,12 @@ export function InventoryHub() {
           }}
           tabs={[
             { id: 'all', label: 'All products', count: summary?.totalProducts ?? 0 },
+            {
+              id: 'offered',
+              label: 'Offered products',
+              count: summary?.offeredProducts ?? 0,
+              badgeTone: (summary?.offeredProducts ?? 0) > 0 ? 'ok' : 'neutral',
+            },
             {
               id: 'low',
               label: 'Low stock',
@@ -710,11 +736,22 @@ export function InventoryHub() {
                       size={42}
                     />
                     <div className="min-w-0">
-                      <div className="font-semibold text-[#0B2A2F] truncate">{p.name}</div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-semibold text-[#0B2A2F] truncate">{p.name}</span>
+                        {p.offer?.isActive && (
+                          <Badge tone="copper">Offered product</Badge>
+                        )}
+                      </div>
                       <div className="text-[12px] text-[#52666A] truncate">
                         {[p.brand, p.model].filter(Boolean).join(' · ') || p.sku}{' '}
                         <span className="mono text-[11px]">({p.sku})</span>
                       </div>
+                      {p.offer?.isActive && (
+                        <div className="text-[11px] font-semibold text-[#8A3D12] mt-0.5 truncate">
+                          {formatOfferCustomerText(p.baseSellingPrice, p.offer, formatRs) ??
+                            `Buy ${p.offer.minQuantity} for ${formatRs(p.offer.bundlePrice)}`}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ),
@@ -833,6 +870,15 @@ export function InventoryHub() {
               <Button variant="secondary" onClick={() => openAdjustFor(selected)}>
                 <SlidersHorizontal className="w-4 h-4" /> Adjust stock
               </Button>
+              <Button
+                variant="copperTint"
+                onClick={() => {
+                  setOffersInitialProductId(selected.id);
+                  setOffersOpen(true);
+                }}
+              >
+                <Tag className="w-4 h-4" /> {selected.offer?.isActive ? 'Edit offer' : 'Add offer'}
+              </Button>
               {isOwner && (
                 <Button variant="secondary" onClick={() => openPriceFor(selected)}>
                   <Edit3 className="w-4 h-4" /> Change price
@@ -902,6 +948,39 @@ export function InventoryHub() {
                 )}
               </div>
             </div>
+
+            {selected.offer?.isActive && (
+              <div className="p-3.5 rounded-[12px] bg-[#FCEFE4] border border-[#E2B48F] flex items-center justify-between gap-3 flex-wrap">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <Tag className="w-4 h-4 text-[#C9682E]" />
+                    <span className="text-[13px] font-bold text-[#8A3D12]">
+                      Offered product
+                    </span>
+                  </div>
+                  <div className="text-[13px] font-semibold text-[#0B2A2F]">
+                    {formatOfferCustomerText(selected.baseSellingPrice, selected.offer, formatRs) ??
+                      `Buy ${selected.offer.minQuantity} for ${formatRs(selected.offer.bundlePrice)}`}
+                  </div>
+                  <div className="text-[12px] text-[#8A3D12] num">
+                    Bundle: {selected.offer.minQuantity} for {formatRs(selected.offer.bundlePrice)}{' '}
+                    (regular {formatRs(selected.baseSellingPrice * selected.offer.minQuantity)})
+                  </div>
+                </div>
+                {canManageStock && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      setOffersInitialProductId(selected.id);
+                      setOffersOpen(true);
+                    }}
+                  >
+                    Manage offer
+                  </Button>
+                )}
+              </div>
+            )}
 
             {/* Variant breakdown by colour & size */}
             <div className="space-y-3">
@@ -1115,6 +1194,27 @@ export function InventoryHub() {
           />
         </div>
       </Modal>
+
+      <OffersModal
+        open={offersOpen}
+        onClose={() => setOffersOpen(false)}
+        branchId={branchId || undefined}
+        initialProductId={offersInitialProductId}
+        onChanged={async () => {
+          await loadProducts();
+          if (selectedId) {
+            try {
+              const refreshed = await footwearInventoryService.getProduct(
+                selectedId,
+                branchId || undefined,
+              );
+              setSelectedDetail(refreshed.product);
+            } catch {
+              // ignore refresh errors
+            }
+          }
+        }}
+      />
 
       <ConfirmDialog
         open={deleteOpen && !!selected}

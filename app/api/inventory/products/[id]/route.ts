@@ -174,6 +174,7 @@ export async function PATCH(
       body.upperMaterial !== undefined ? body.upperMaterial?.trim() || null : prevMeta.upper_material ?? null,
     sizing_system: sizingSystem,
     reorder_level: body.reorderLevel !== undefined ? Math.max(0, Number(body.reorderLevel)) : prevMeta.reorder_level ?? 3,
+    offer: prevMeta.offer ?? null,
   };
 
   const productUpdate: TableUpdate<'products'> = {

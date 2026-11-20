@@ -4,6 +4,7 @@ import type { PaymentSplitPart } from '@/types';
 
 export interface PaymentSummaryProps {
   subtotal: number;
+  offerSavings?: number;
   discountAmt?: number;
   taxAmt?: number;
   total: number;
@@ -14,6 +15,7 @@ export interface PaymentSummaryProps {
 
 export function PaymentSummary({
   subtotal,
+  offerSavings = 0,
   discountAmt = 0,
   taxAmt = 0,
   total,
@@ -27,8 +29,14 @@ export function PaymentSummary({
     <div className="rounded-[12px] border border-[#E7E0D7] bg-[#FBF8F4] p-4 space-y-2 text-[14px]">
       <div className="flex items-center justify-between text-[#3D5357]">
         <span>Subtotal{typeof itemCount === 'number' ? ` (${itemCount} items)` : ''}</span>
-        <span className="font-semibold num">{formatRs(subtotal)}</span>
+        <span className="font-semibold num">{formatRs(subtotal + offerSavings)}</span>
       </div>
+      {offerSavings > 0 && (
+        <div className="flex items-center justify-between text-[#14532D]">
+          <span>Bundle offer savings</span>
+          <span className="font-semibold num">−{formatRs(offerSavings)}</span>
+        </div>
+      )}
       {discountAmt > 0 && (
         <div className="flex items-center justify-between text-[#14532D]">
           <span>Discount</span>

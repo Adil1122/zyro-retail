@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireWorkspaceContext } from '@/lib/api/workspace-guard';
+import { formatRs } from '@/lib/format';
+import {
+  computeCartOfferDiscounts,
+  normalizeProductOffer,
+  type FootwearMetadata,
+} from '@/types/footwear';
 
 interface CheckoutItemInput {
   variantId: string;
@@ -68,7 +74,7 @@ export async function POST(req: NextRequest) {
       .select(
         `
         id, product_id, variant_name, sku, colour_name, size_name, cost_price, selling_price, is_active, deleted_at,
-        products:product_id ( id, name, brand, base_selling_price, track_inventory, is_active, deleted_at )
+        products:product_id ( id, name, brand, base_selling_price, track_inventory, is_active, deleted_at, metadata )
       `,
       )
       .eq('business_id', businessId)
@@ -107,6 +113,7 @@ export async function POST(req: NextRequest) {
           track_inventory: boolean;
           is_active: boolean;
           deleted_at: string | null;
+          metadata: FootwearMetadata | null;
         } | null;
       },
     ]),
@@ -119,20 +126,24 @@ export async function POST(req: NextRequest) {
     ]),
   );
 
-  // Aggregate requested quantities per variant to prevent overselling across split lines
+  // First validate all cart lines, stock, prices, and manual discounts
   const requestedQtyByVariant = new Map<string, number>();
-  let serverSubtotal = 0;
 
-  const rpcItems: Array<{
-    variant_id: string;
-    quantity: number;
-    unit_price: number;
-    original_unit_price: number;
-    line_discount_amount: number;
+  const validatedLines: Array<{
+    key: string;
+    productId: string;
+    variantId: string;
+    productName: string;
+    qty: number;
+    finalUnitPrice: number;
+    authoritativePrice: number;
+    manualLineDiscount: number;
     note?: string;
+    offer: ReturnType<typeof normalizeProductOffer>;
   }> = [];
 
-  for (const item of itemsInput) {
+  for (let idx = 0; idx < itemsInput.length; idx++) {
+    const item = itemsInput[idx];
     const qty = Number(item.quantity);
     if (!Number.isFinite(qty) || qty <= 0) {
       return NextResponse.json({ error: 'All line quantities must be positive.' }, { status: 400 });
@@ -169,14 +180,14 @@ export async function POST(req: NextRequest) {
       finalUnitPrice = Number(item.unitPrice);
     }
 
-    const lineDiscount = Math.max(0, Number(item.lineDiscountAmount ?? 0));
-    if (lineDiscount > 0 && !canApplyDiscount) {
+    const manualLineDiscount = Math.max(0, Number(item.lineDiscountAmount ?? 0));
+    if (manualLineDiscount > 0 && !canApplyDiscount) {
       return NextResponse.json(
         { error: 'You do not have permission to apply item discounts.' },
         { status: 403 },
       );
     }
-    if (lineDiscount > finalUnitPrice * qty) {
+    if (manualLineDiscount > finalUnitPrice * qty) {
       return NextResponse.json(
         { error: `Line discount for "${v.products.name}" exceeds line subtotal.` },
         { status: 400 },
@@ -199,16 +210,64 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const lineTotal = Math.max(0, finalUnitPrice * qty - lineDiscount);
+    const offer = normalizeProductOffer(v.products.metadata?.offer);
+
+    validatedLines.push({
+      key: `${v.id}-${idx}`,
+      productId: v.product_id,
+      variantId: v.id,
+      productName: v.products.name,
+      qty,
+      finalUnitPrice,
+      authoritativePrice,
+      manualLineDiscount,
+      note: item.note?.trim() || undefined,
+      offer,
+    });
+  }
+
+  // Compute server-authoritative bundle offer discounts across all cart lines per product
+  const offerBreakdown = computeCartOfferDiscounts(
+    validatedLines.map((l) => ({
+      key: l.key,
+      productId: l.productId,
+      qty: l.qty,
+      price: l.finalUnitPrice,
+      offer: l.offer,
+    })),
+  );
+
+  let serverSubtotal = 0;
+  const rpcItems: Array<{
+    variant_id: string;
+    quantity: number;
+    unit_price: number;
+    original_unit_price: number;
+    line_discount_amount: number;
+    note?: string;
+  }> = [];
+
+  for (const line of validatedLines) {
+    const offerInfo = offerBreakdown[line.key];
+    const offerDiscount = offerInfo?.offerDiscount ?? 0;
+    const gross = line.finalUnitPrice * line.qty;
+    const totalLineDiscount = Math.min(gross, line.manualLineDiscount + offerDiscount);
+    const lineTotal = Math.max(0, gross - totalLineDiscount);
     serverSubtotal += lineTotal;
 
+    const offerNote =
+      offerDiscount > 0 && offerInfo?.offer
+        ? `Offer applied: Buy ${offerInfo.offer.minQuantity} for ${formatRs(offerInfo.offer.bundlePrice)}`
+        : null;
+    const combinedNote = [line.note, offerNote].filter(Boolean).join(' · ') || undefined;
+
     rpcItems.push({
-      variant_id: v.id,
-      quantity: qty,
-      unit_price: finalUnitPrice,
-      original_unit_price: authoritativePrice,
-      line_discount_amount: lineDiscount,
-      ...(item.note ? { note: item.note } : {}),
+      variant_id: line.variantId,
+      quantity: line.qty,
+      unit_price: line.finalUnitPrice,
+      original_unit_price: line.authoritativePrice,
+      line_discount_amount: totalLineDiscount,
+      ...(combinedNote ? { note: combinedNote } : {}),
     });
   }
 

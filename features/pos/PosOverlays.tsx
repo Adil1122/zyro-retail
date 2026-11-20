@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
-import { Loader2, PauseCircle, PlayCircle, ShieldAlert, Trash2 } from 'lucide-react';
+import { Loader2, PauseCircle, PlayCircle, ShieldAlert, Tag, Trash2 } from 'lucide-react';
 import { ProductArtwork } from '@/components/domain/ProductArtwork';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -13,11 +13,14 @@ import { useZyro } from '@/hooks/useZyro';
 import { formatRs } from '@/lib/format';
 import type { BillDiscount } from '@/types';
 import {
+  formatOfferCustomerText,
   formatVariantDisplay,
   formatVariantSizeLabel,
+  getOfferSavings,
   type FootwearProductRecord,
   type FootwearVariantRecord,
   type PosHeldBillRecord,
+  type ProductOffer,
   type SizingSystem,
 } from '@/types/footwear';
 
@@ -40,6 +43,7 @@ export interface FootwearCartLine {
   qty: number;
   availableStock: number;
   lineDiscount: number;
+  offer?: ProductOffer | null;
   note?: string;
 }
 
@@ -52,7 +56,7 @@ export function VariantPickerModal({
   product: FootwearProductRecord | null;
   cartQtyByVariant: Record<string, number>;
   onClose: () => void;
-  onAdd: (variant: FootwearVariantRecord, product: FootwearProductRecord) => void;
+  onAdd: (variant: FootwearVariantRecord, product: FootwearProductRecord, qty?: number) => void;
 }) {
   const colours = useMemo(() => {
     if (!product) return [] as string[];
@@ -156,6 +160,30 @@ export function VariantPickerModal({
           </div>
         </div>
 
+        {(() => {
+          const activeOffer = product.offer?.isActive ? product.offer : null;
+          const unitPrice = activeVariant?.sellingPrice ?? product.baseSellingPrice;
+          const offerMsg = formatOfferCustomerText(unitPrice, activeOffer, formatRs);
+          if (!activeOffer || !offerMsg) return null;
+          const regularTotal = unitPrice * activeOffer.minQuantity;
+          return (
+            <div className="p-3 rounded-[12px] bg-[#FCEFE4] border border-[#E2B48F] flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-start gap-2">
+                <Tag className="w-4 h-4 text-[#C9682E] shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-[13px] font-bold text-[#8A3D12]">{offerMsg}</div>
+                  <div className="text-[12px] text-[#8A3D12] num">
+                    Bundle offer: {activeOffer.minQuantity} for{' '}
+                    <strong>{formatRs(activeOffer.bundlePrice)}</strong>{' '}
+                    <span className="line-through opacity-75">{formatRs(regularTotal)}</span>
+                  </div>
+                </div>
+              </div>
+              <Badge tone="copper">Offered product</Badge>
+            </div>
+          );
+        })()}
+
         {colours.length > 0 && (
           <div className="space-y-2">
             <div className="text-[13px] font-semibold text-[#0B2A2F]">Colour</div>
@@ -225,17 +253,33 @@ export function VariantPickerModal({
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex flex-wrap justify-end gap-2 pt-2">
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
+          {product.offer?.isActive &&
+            activeVariant &&
+            getOfferSavings(activeVariant.sellingPrice, product.offer) > 0 &&
+            remainingStock >= product.offer.minQuantity && (
+              <Button
+                variant="copperTint"
+                size="lg"
+                onClick={() => {
+                  onAdd(activeVariant, product, product.offer!.minQuantity);
+                  onClose();
+                }}
+              >
+                <Tag className="w-4 h-4" />
+                Add {product.offer.minQuantity} · {formatRs(product.offer.bundlePrice)}
+              </Button>
+            )}
           <Button
             variant="primary"
             size="lg"
             disabled={!activeVariant || remainingStock <= 0}
             onClick={() => {
               if (!activeVariant) return;
-              onAdd(activeVariant, product);
+              onAdd(activeVariant, product, 1);
               onClose();
             }}
           >
@@ -453,6 +497,25 @@ export function LineEditModal({
       maxWidth="sm"
     >
       <div className="space-y-4">
+        {line.offer?.isActive && (() => {
+          const offerMsg = formatOfferCustomerText(price, line.offer, formatRs);
+          if (!offerMsg) return null;
+          const bundles = Math.floor(qty / line.offer.minQuantity);
+          const bundleSaving = bundles * getOfferSavings(price, line.offer);
+          return (
+            <div className="p-3 rounded-[10px] bg-[#FCEFE4] border border-[#E2B48F] text-[12px] text-[#8A3D12] space-y-0.5">
+              <div className="font-bold flex items-center gap-1.5">
+                <Tag className="w-3.5 h-3.5 text-[#C9682E]" />
+                {offerMsg}
+              </div>
+              <div className="num">
+                {bundles > 0
+                  ? `Offer active on ${qty} qty: −${formatRs(bundleSaving)} auto-applied`
+                  : `Set quantity to ${line.offer.minQuantity} to pay ${formatRs(line.offer.bundlePrice)}`}
+              </div>
+            </div>
+          );
+        })()}
         <Input
           label={`Quantity (max ${line.availableStock} available)`}
           type="number"

@@ -1,6 +1,7 @@
 import type {
   FootwearCategoryRecord,
   FootwearProductRecord,
+  ProductOffer,
   SizingSystem,
   StockCountRecord,
   StockMovementRecord,
@@ -34,6 +35,7 @@ export interface InventoryProductsResponse {
   summary: {
     totalProducts: number;
     activeProducts: number;
+    offeredProducts: number;
     totalVariants: number;
     totalPairsOnHand: number;
     lowStockCount: number;
@@ -297,5 +299,29 @@ export const footwearInventoryService = {
   getReports(branchId?: string) {
     const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
     return apiJson<InventoryReportResponse>(`/api/inventory/reports${qs}`);
+  },
+
+  saveOffer(payload: {
+    productId: string;
+    minQuantity: number;
+    bundlePrice: number;
+    branchId?: string;
+  }) {
+    return apiJson<{ productId: string; productName: string; offer: ProductOffer }>(
+      '/api/inventory/offers',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+
+  removeOffer(productId: string, branchId?: string) {
+    const sp = new URLSearchParams({ productId });
+    if (branchId) sp.set('branchId', branchId);
+    return apiJson<{ removed: boolean; productId: string }>(
+      `/api/inventory/offers?${sp.toString()}`,
+      { method: 'DELETE' },
+    );
   },
 };

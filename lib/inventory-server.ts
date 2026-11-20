@@ -1,11 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type {
-  FootwearBarcodeRecord,
-  FootwearMetadata,
-  FootwearProductImageRecord,
-  FootwearProductRecord,
-  FootwearVariantRecord,
-  SizingSystem,
+import {
+  normalizeProductOffer,
+  type FootwearBarcodeRecord,
+  type FootwearMetadata,
+  type FootwearProductImageRecord,
+  type FootwearProductRecord,
+  type FootwearVariantRecord,
+  type SizingSystem,
 } from '@/types/footwear';
 
 export function normalizeSizingSystem(val: unknown): SizingSystem {
@@ -500,6 +501,7 @@ export async function fetchHydratedFootwearProducts(params: {
       unitOfMeasure: p.unit_of_measure || (isBagCategoryName(categoryPath) ? 'piece' : 'pair'),
       baseCostPrice: Number(p.base_cost_price ?? 0),
       baseSellingPrice: Number(p.base_selling_price ?? 0),
+      offer: normalizeProductOffer(meta.offer),
       isActive: p.is_active,
       images,
       primaryImageUrl: primaryImg?.signedUrl ?? primaryImg?.imageUrl ?? null,

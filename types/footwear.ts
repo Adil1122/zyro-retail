@@ -110,6 +110,163 @@ export interface FootwearVariantRecord {
   branchStocks?: Record<string, { onHand: number; reserved: number; reorderLevel: number }>;
 }
 
+export interface ProductOffer {
+  minQuantity: number;
+  bundlePrice: number;
+  isActive: boolean;
+  updatedAt?: string;
+}
+
+export function normalizeProductOffer(raw: unknown): ProductOffer | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  if (obj.isActive === false) return null;
+  const minQuantity = Math.floor(Number(obj.minQuantity ?? 0));
+  const bundlePrice = Number(obj.bundlePrice ?? 0);
+  if (!Number.isFinite(minQuantity) || minQuantity < 2) return null;
+  if (!Number.isFinite(bundlePrice) || bundlePrice <= 0) return null;
+  return {
+    minQuantity,
+    bundlePrice: Math.round(bundlePrice * 100) / 100,
+    isActive: true,
+    updatedAt: typeof obj.updatedAt === 'string' ? obj.updatedAt : undefined,
+  };
+}
+
+export function getOfferSavings(
+  unitPrice: number,
+  offer: ProductOffer | null | undefined,
+): number {
+  if (!offer || !offer.isActive || offer.minQuantity < 2 || offer.bundlePrice <= 0) return 0;
+  const regularTotal = unitPrice * offer.minQuantity;
+  return Math.max(0, Math.round((regularTotal - offer.bundlePrice) * 100) / 100);
+}
+
+export function formatOfferCustomerText(
+  unitPrice: number,
+  offer: ProductOffer | null | undefined,
+  formatCurrency: (amount: number) => string,
+): string | null {
+  if (!offer || !offer.isActive) return null;
+  const savings = getOfferSavings(unitPrice, offer);
+  if (savings <= 0) return null;
+  return `Buy ${offer.minQuantity} and get ${formatCurrency(savings)} discount`;
+}
+
+export interface CartOfferLineInput {
+  key: string;
+  productId: string;
+  qty: number;
+  price: number;
+  offer?: ProductOffer | null;
+}
+
+export interface CartOfferLineResult {
+  offerDiscount: number;
+  bundlesApplied: number;
+  totalProductQty: number;
+  remainingForNextBundle: number;
+  offer: ProductOffer | null;
+}
+
+export function computeCartOfferDiscounts(
+  lines: CartOfferLineInput[],
+): Record<string, CartOfferLineResult> {
+  const results: Record<string, CartOfferLineResult> = {};
+  const byProduct = new Map<string, CartOfferLineInput[]>();
+
+  for (const line of lines) {
+    const group = byProduct.get(line.productId) ?? [];
+    group.push(line);
+    byProduct.set(line.productId, group);
+  }
+
+  for (const [, group] of byProduct.entries()) {
+    const activeOffer = group.find((l) => l.offer?.isActive)?.offer ?? null;
+    const totalProductQty = group.reduce((sum, l) => sum + Math.max(0, l.qty), 0);
+
+    if (!activeOffer || activeOffer.minQuantity < 2 || activeOffer.bundlePrice <= 0) {
+      for (const l of group) {
+        results[l.key] = {
+          offerDiscount: 0,
+          bundlesApplied: 0,
+          totalProductQty,
+          remainingForNextBundle: 0,
+          offer: null,
+        };
+      }
+      continue;
+    }
+
+    const bundlesApplied = Math.floor(totalProductQty / activeOffer.minQuantity);
+    const remainder = totalProductQty % activeOffer.minQuantity;
+    const remainingForNextBundle =
+      totalProductQty < activeOffer.minQuantity
+        ? activeOffer.minQuantity - totalProductQty
+        : remainder === 0
+          ? 0
+          : activeOffer.minQuantity - remainder;
+
+    let totalSavings = 0;
+    if (bundlesApplied > 0) {
+      const unitsToBundle = bundlesApplied * activeOffer.minQuantity;
+      let counted = 0;
+      let regularBundledTotal = 0;
+      for (const l of group) {
+        if (counted >= unitsToBundle) break;
+        const take = Math.min(Math.max(0, l.qty), unitsToBundle - counted);
+        regularBundledTotal += take * l.price;
+        counted += take;
+      }
+      totalSavings = Math.max(
+        0,
+        Math.round(regularBundledTotal - bundlesApplied * activeOffer.bundlePrice),
+      );
+    }
+
+    const totalGross = group.reduce((sum, l) => sum + Math.max(0, l.price * l.qty), 0);
+    let remainingToDistribute = Math.min(totalSavings, Math.round(totalGross));
+
+    group.forEach((l, idx) => {
+      const lineGross = Math.max(0, Math.round(l.price * l.qty));
+      let lineOfferDiscount = 0;
+      if (remainingToDistribute > 0 && lineGross > 0 && totalGross > 0) {
+        if (idx === group.length - 1) {
+          lineOfferDiscount = Math.min(remainingToDistribute, lineGross);
+        } else {
+          const share = Math.floor((totalSavings * lineGross) / totalGross);
+          lineOfferDiscount = Math.min(share, remainingToDistribute, lineGross);
+        }
+        remainingToDistribute = Math.max(0, remainingToDistribute - lineOfferDiscount);
+      }
+
+      results[l.key] = {
+        offerDiscount: lineOfferDiscount,
+        bundlesApplied,
+        totalProductQty,
+        remainingForNextBundle,
+        offer: activeOffer,
+      };
+    });
+
+    // If rounding capped earlier lines and left residual discount, apply to any line with headroom
+    if (remainingToDistribute > 0) {
+      for (const l of group) {
+        if (remainingToDistribute <= 0) break;
+        const lineGross = Math.max(0, Math.round(l.price * l.qty));
+        const headroom = Math.max(0, lineGross - results[l.key].offerDiscount);
+        if (headroom > 0) {
+          const add = Math.min(headroom, remainingToDistribute);
+          results[l.key].offerDiscount += add;
+          remainingToDistribute -= add;
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
 export interface FootwearMetadata {
   category_scope?: 'footwear' | 'bags' | 'general';
   model?: string | null;
@@ -120,6 +277,7 @@ export interface FootwearMetadata {
   upper_material?: string | null;
   sizing_system?: SizingSystem;
   reorder_level?: number;
+  offer?: ProductOffer | null;
 }
 
 export interface FootwearProductRecord {
@@ -145,6 +303,7 @@ export interface FootwearProductRecord {
   unitOfMeasure: string;
   baseCostPrice: number;
   baseSellingPrice: number;
+  offer: ProductOffer | null;
   isActive: boolean;
   images: FootwearProductImageRecord[];
   primaryImageUrl: string | null;

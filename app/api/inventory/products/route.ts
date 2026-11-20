@@ -148,6 +148,8 @@ export async function GET(req: NextRequest) {
       filtered = filtered.filter((p) => p.lowStockVariants > 0 || (p.totalStock > 0 && p.totalStock <= 5));
     } else if (stockFilter === 'in') {
       filtered = filtered.filter((p) => p.totalStock > 0);
+    } else if (stockFilter === 'offered') {
+      filtered = filtered.filter((p) => Boolean(p.offer?.isActive));
     }
 
     filtered = [...filtered].sort((a, b) => {
@@ -178,6 +180,7 @@ export async function GET(req: NextRequest) {
     const summary = {
       totalProducts: allProducts.length,
       activeProducts: allProducts.filter((p) => p.isActive).length,
+      offeredProducts: allProducts.filter((p) => Boolean(p.offer?.isActive)).length,
       totalVariants: allProducts.reduce((s, p) => s + p.variants.length, 0),
       totalPairsOnHand: allProducts.reduce((s, p) => s + p.totalStock, 0),
       lowStockCount: allProducts.reduce((s, p) => s + p.lowStockVariants, 0),

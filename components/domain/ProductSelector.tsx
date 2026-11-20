@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
-import { ScanBarcode } from 'lucide-react';
+import { ScanBarcode, Tag } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { SearchInput } from '@/components/ui/SearchInput';
 import { SWATCHES } from '@/constants/kits';
@@ -9,7 +9,10 @@ import { useZyro } from '@/hooks/useZyro';
 import { formatRs } from '@/lib/format';
 import { getStockStatusInfo } from '@/lib/inventory';
 import type { ProductItem } from '@/types';
-import type { FootwearProductRecord } from '@/types/footwear';
+import {
+  formatOfferCustomerText,
+  type FootwearProductRecord,
+} from '@/types/footwear';
 import { ProductArtwork } from './ProductArtwork';
 
 export interface ProductSelectorProps {
@@ -388,6 +391,7 @@ export function FootwearProductSelector({
             const prices = product.variants.map((v) => v.sellingPrice);
             const minPrice = prices.length ? Math.min(...prices) : product.baseSellingPrice;
             const maxPrice = prices.length ? Math.max(...prices) : product.baseSellingPrice;
+            const offerText = formatOfferCustomerText(minPrice, product.offer, formatRs);
             return (
               <button
                 key={product.id}
@@ -431,6 +435,12 @@ export function FootwearProductSelector({
                       </span>
                     )}
                   </div>
+                  {offerText && (
+                    <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-[6px] bg-[#FCEFE4] border border-[#E2B48F] text-[11px] font-semibold text-[#8A3D12] max-w-full">
+                      <Tag className="w-3 h-3 shrink-0 text-[#C9682E]" />
+                      <span className="truncate">{offerText}</span>
+                    </div>
+                  )}
                   <div className="mt-1 flex items-center gap-1.5">
                     <span style={{ backgroundColor: st.dot }} className="w-2 h-2 rounded-full" />
                     <span style={{ color: st.fg }} className="text-[11px] font-semibold truncate">
