@@ -3,19 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import {
-  ArrowLeft,
-  Check,
-  ChevronDown,
-  ChevronUp,
-  FolderKanban,
-  Plus,
-  Printer,
-  Save,
-  Sparkles,
-  Trash2,
-  Upload,
-} from 'lucide-react';
+import { ArrowLeft, Check, Plus, Printer, Save, Sparkles, Trash2, Upload } from 'lucide-react';
 import { BarcodePreview } from '@/components/domain/BarcodePreview';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Badge } from '@/components/ui/Badge';
@@ -29,13 +17,15 @@ import { useZyro } from '@/hooks/useZyro';
 import { formatRs } from '@/lib/format';
 import {
   BAG_STANDARD_SIZES,
-  FOOTWEAR_GENDERS,
+  FOOTWEAR_CHILD_GROUPS,
+  FOOTWEAR_SIZING_SYSTEMS,
   FOOTWEAR_TYPES,
-  SIZING_SYSTEMS,
+  PARENT_CATEGORY_OPTIONS,
   formatVariantDisplay,
   formatVariantSizeLabel,
   type FootwearCategoryRecord,
   type FootwearProductRecord,
+  type ParentCategoryKey,
   type SizingSystem,
 } from '@/types/footwear';
 
@@ -68,13 +58,13 @@ function makeSkuPart(val: string, len = 3): string {
   return val.replace(/[^a-zA-Z0-9]/g, '').slice(0, len).toUpperCase() || 'STD';
 }
 
-function buildAutoBaseSku(name: string, brand: string, model: string, categoryName: string): string {
+function buildAutoBaseSku(name: string, brand: string, model: string, fallback: string): string {
   const cleanName = (model || name).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
   if (cleanName.length >= 3) {
     const prefix = brand ? `${makeSkuPart(brand, 3)}-` : '';
     return `${prefix}${cleanName.slice(0, 10)}`;
   }
-  return `${makeSkuPart(brand || categoryName || 'PRD', 3)}-${makeSkuPart(name || 'ITEM', 4)}`;
+  return `${makeSkuPart(brand || fallback || 'PRD', 3)}-${makeSkuPart(name || 'ITEM', 4)}`;
 }
 
 function buildAutoVariantSku(baseCode: string, colourName: string, sizeName: string): string {
@@ -89,22 +79,18 @@ function makeBarcode(sku: string, idx: number): string {
   return `ZR-${clean}-${suffix}`;
 }
 
-function isBagCategoryName(name: string | null | undefined): boolean {
-  if (!name) return false;
-  return /\b(bag|bags|handbag|handbags|purse|purses|clutch|clutches|tote|totes|backpack|backpacks|wallet|wallets|satchel)\b/i.test(
-    name,
+function isBagLikeText(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return /\b(bag|bags|handbag|handbags|purse|purses|clutch|clutches|tote|totes|backpack|backpacks|wallet|wallets)\b/i.test(
+    text,
   );
 }
 
-function inferGenderFromCategoryName(name: string | null | undefined): string | null {
-  if (!name) return null;
-  const lower = name.toLowerCase();
-  if (lower.includes('women') || lower.includes('ladies')) return 'Women';
-  if (lower.includes('men') && !lower.includes('women')) return 'Men';
-  if (lower.includes('kid') || lower.includes('child')) return 'Kids';
-  if (lower.includes('boy')) return 'Boys';
-  if (lower.includes('girl')) return 'Girls';
-  return null;
+function detectCategoryScope(cat: FootwearCategoryRecord | null | undefined): ParentCategoryKey {
+  if (!cat) return 'footwear';
+  if (cat.categoryScope === 'bags' || cat.defaultSizingSystem === 'STANDARD') return 'bags';
+  if (isBagLikeText(cat.name) || isBagLikeText(cat.parentName)) return 'bags';
+  return 'footwear';
 }
 
 export function ItemEditorForm({ itemId }: { itemId?: string }) {
@@ -118,42 +104,41 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
   const [categories, setCategories] = useState<FootwearCategoryRecord[]>([]);
   const [loadedProduct, setLoadedProduct] = useState<FootwearProductRecord | null>(null);
 
-  // Section 1: Category & Product Info
-  const [parentCategoryId, setParentCategoryId] = useState<string>('');
-  const [childCategoryId, setChildCategoryId] = useState<string>('');
-  const [name, setName] = useState('');
-  const [sku, setSku] = useState('');
-  const [isActive, setIsActive] = useState(true);
-  const [images, setImages] = useState<ImageDraft[]>([]);
+  // Original 3-tab stepper design
+  const [step, setStep] = useState<1 | 2 | 3>(1);
 
-  // Optional extended details (kept collapsible for speed, preserved for existing footwear records)
-  const [showMoreDetails, setShowMoreDetails] = useState(false);
+  // Step 1: Product Details
+  const [parentKey, setParentKey] = useState<ParentCategoryKey>('footwear');
+  const [childGroup, setChildGroup] = useState<string>(FOOTWEAR_CHILD_GROUPS[0]);
+  const [footwearType, setFootwearType] = useState<string>(FOOTWEAR_TYPES[0]);
+  const [categoryId, setCategoryId] = useState<string>('');
+  const [name, setName] = useState('');
   const [brand, setBrand] = useState('');
   const [model, setModel] = useState('');
-  const [footwearType, setFootwearType] = useState<string>(FOOTWEAR_TYPES[0]);
-  const [gender, setGender] = useState<string>('');
   const [material, setMaterial] = useState('');
   const [upperMaterial, setUpperMaterial] = useState('');
   const [soleMaterial, setSoleMaterial] = useState('');
   const [description, setDescription] = useState('');
+  const [isActive, setIsActive] = useState(true);
+  const [images, setImages] = useState<ImageDraft[]>([]);
 
-  // Section 2: Pricing, Colours & Configurable Sizes
-  const [baseCostPrice, setBaseCostPrice] = useState('');
+  // Step 2: Pricing & Configurable Variants
+  const [sku, setSku] = useState('');
   const [baseSellingPrice, setBaseSellingPrice] = useState('');
+  const [baseCostPrice, setBaseCostPrice] = useState('');
   const [reorderLevel, setReorderLevel] = useState('3');
   const [sizingSystem, setSizingSystem] = useState<SizingSystem>('EU');
   const [selectedColours, setSelectedColours] = useState<string[]>(['Black']);
   const [customColourInput, setCustomColourInput] = useState('');
   const [selectedSizes, setSelectedSizes] = useState<string[]>([]);
   const [customSizeInput, setCustomSizeInput] = useState('');
-  const [bulkQtyInput, setBulkQtyInput] = useState('5');
+  const [defaultOpeningQty, setDefaultOpeningQty] = useState('5');
 
-  // Section 3: Auto-generated Variant Matrix & Barcode Preview
+  // Step 3: Barcodes & Stock
   const [variants, setVariants] = useState<VariantDraft[]>([]);
   const [previewIdx, setPreviewIdx] = useState(0);
 
   const hydratedRef = useRef(!itemId);
-  const initialCategoryAppliedRef = useRef(false);
   const prevBaseCostRef = useRef('');
   const prevBaseSellingRef = useRef('');
 
@@ -174,11 +159,28 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
           if (cancelled) return;
           const p = res.product;
           setLoadedProduct(p);
+          const bagMode =
+            p.sizingSystem === 'STANDARD' ||
+            p.unitOfMeasure === 'piece' ||
+            isBagLikeText(p.categoryPath) ||
+            isBagLikeText(p.categoryName);
+          setParentKey(bagMode ? 'bags' : 'footwear');
           setName(p.name);
           setBrand(p.brand || '');
           setModel(p.model || '');
-          setFootwearType(p.footwearType || FOOTWEAR_TYPES[0]);
-          setGender(p.gender || '');
+          setFootwearType(
+            FOOTWEAR_TYPES.includes(p.footwearType as (typeof FOOTWEAR_TYPES)[number])
+              ? p.footwearType
+              : FOOTWEAR_TYPES[0],
+          );
+          setCategoryId(p.categoryId || '');
+          if (p.gender && FOOTWEAR_CHILD_GROUPS.includes(p.gender as (typeof FOOTWEAR_CHILD_GROUPS)[number])) {
+            setChildGroup(p.gender);
+          } else if (p.gender === 'Boys' || p.gender === 'Girls') {
+            setChildGroup('Kids');
+          } else {
+            setChildGroup('Men');
+          }
           setMaterial(p.material || '');
           setUpperMaterial(p.upperMaterial || '');
           setSoleMaterial(p.soleMaterial || '');
@@ -189,12 +191,9 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
           setBaseCostPrice(String(p.baseCostPrice));
           prevBaseSellingRef.current = String(p.baseSellingPrice);
           prevBaseCostRef.current = String(p.baseCostPrice);
-          setSizingSystem(p.sizingSystem || 'EU');
+          setSizingSystem(bagMode ? 'STANDARD' : p.sizingSystem === 'STANDARD' ? 'EU' : p.sizingSystem || 'EU');
           setSelectedColours(p.colours.length > 0 ? p.colours : ['Black']);
           setSelectedSizes(p.sizes.length > 0 ? p.sizes : []);
-          if (p.brand || p.model || p.material || p.upperMaterial || p.soleMaterial || p.description) {
-            setShowMoreDetails(true);
-          }
           setImages(
             p.images.map((img) => ({
               storagePath: img.storagePath,
@@ -216,6 +215,8 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
               reorderLevel: String(v.reorderLevel),
               openingStock: String(v.stockOnHand),
               isActive: v.isActive,
+              skuTouched: true,
+              barcodeTouched: true,
             })),
           );
           hydratedRef.current = true;
@@ -233,117 +234,48 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
     };
   }, [itemId, notify]);
 
-  // Parent & child hierarchy derived from loaded categories
-  const parentCategories = useMemo(
-    () => categories.filter((c) => !c.parentId && c.isActive),
-    [categories],
+  // Filter catalog categories matching the selected parent (Footwear vs Bags / Handbags)
+  const matchingCatalogCategories = useMemo(() => {
+    return categories.filter((c) => c.isActive && detectCategoryScope(c) === parentKey);
+  }, [categories, parentKey]);
+
+  const selectedCategoryRecord = useMemo(
+    () => categories.find((c) => c.id === categoryId) ?? null,
+    [categories, categoryId],
   );
 
-  const childrenByParent = useMemo(() => {
-    const map = new Map<string, FootwearCategoryRecord[]>();
-    for (const c of categories) {
-      if (c.parentId && c.isActive) {
-        const list = map.get(c.parentId) ?? [];
-        list.push(c);
-        map.set(c.parentId, list);
-      }
-    }
-    return map;
-  }, [categories]);
-
-  // Initialize parent/child category selection once categories (and product if editing) load
+  // Sync loaded product's category scope once categories arrive (if editing)
   useEffect(() => {
-    if (categories.length === 0 || initialCategoryAppliedRef.current) return;
-
-    if (itemId) {
-      if (!loadedProduct) return;
-      const matched = loadedProduct.categoryId
-        ? categories.find((c) => c.id === loadedProduct.categoryId)
-        : null;
-      if (matched?.parentId) {
-        setParentCategoryId(matched.parentId);
-        setChildCategoryId(matched.id);
-      } else if (loadedProduct.parentCategoryId && loadedProduct.categoryId) {
-        setParentCategoryId(loadedProduct.parentCategoryId);
-        setChildCategoryId(loadedProduct.categoryId);
-      } else if (matched) {
-        setParentCategoryId(matched.id);
-        setChildCategoryId('');
-      }
-      initialCategoryAppliedRef.current = true;
-      return;
+    if (!loadedProduct || categories.length === 0) return;
+    const cat = categories.find((c) => c.id === loadedProduct.categoryId);
+    if (cat?.childGroup && FOOTWEAR_CHILD_GROUPS.includes(cat.childGroup as (typeof FOOTWEAR_CHILD_GROUPS)[number])) {
+      setChildGroup(cat.childGroup);
     }
+  }, [loadedProduct, categories]);
 
-    // New product: default to Footwear (or first parent) and its first child if any
-    if (parentCategories.length > 0) {
-      const preferred =
-        parentCategories.find((c) => c.name.toLowerCase().includes('footwear')) ||
-        parentCategories[0];
-      const kids = childrenByParent.get(preferred.id) ?? [];
-      const firstChild = kids[0] ?? null;
-      setParentCategoryId(preferred.id);
-      setChildCategoryId(firstChild?.id ?? '');
-
-      const targetCat = firstChild ?? preferred;
-      const nextSizing: SizingSystem =
-        isBagCategoryName(targetCat.name) || isBagCategoryName(preferred.name)
-          ? 'STANDARD'
-          : targetCat.defaultSizingSystem || preferred.defaultSizingSystem || 'EU';
-      setSizingSystem(nextSizing);
-
-      const configuredSizes =
-        targetCat.sizeOptions.length > 0
-          ? targetCat.sizeOptions
-          : preferred.sizeOptions.length > 0
-            ? preferred.sizeOptions
-            : nextSizing === 'STANDARD'
-              ? ['One Size']
-              : [];
-      if (configuredSizes.length > 0) {
-        setSelectedSizes(nextSizing === 'STANDARD' ? [configuredSizes[0]] : configuredSizes);
-      }
-    }
-    initialCategoryAppliedRef.current = true;
-  }, [categories, parentCategories, childrenByParent, itemId, loadedProduct]);
-
-  const selectedParent = useMemo(
-    () => categories.find((c) => c.id === parentCategoryId) ?? null,
-    [categories, parentCategoryId],
-  );
-
-  const availableChildren = useMemo(
-    () => (parentCategoryId ? childrenByParent.get(parentCategoryId) ?? [] : []),
-    [childrenByParent, parentCategoryId],
-  );
-
-  const selectedChild = useMemo(
-    () => availableChildren.find((c) => c.id === childCategoryId) ?? null,
-    [availableChildren, childCategoryId],
-  );
-
-  const effectiveCategory = selectedChild ?? selectedParent ?? null;
-
-  const isBagProduct = useMemo(
-    () =>
-      sizingSystem === 'STANDARD' ||
-      isBagCategoryName(effectiveCategory?.name) ||
-      isBagCategoryName(selectedParent?.name),
-    [sizingSystem, effectiveCategory, selectedParent],
-  );
-
+  const isBagProduct = parentKey === 'bags';
   const unitLabel = isBagProduct ? 'piece' : 'pair';
   const unitPlural = isBagProduct ? 'pcs' : 'pairs';
 
   // Category-configured size options (NOT hardcoded for footwear)
   const categoryConfiguredSizes = useMemo(() => {
-    const childOpts = selectedChild?.sizeOptions ?? [];
-    if (childOpts.length > 0) return childOpts;
-    const parentOpts = selectedParent?.sizeOptions ?? [];
-    if (parentOpts.length > 0) return parentOpts;
+    if (selectedCategoryRecord?.sizeOptions?.length) {
+      return selectedCategoryRecord.sizeOptions;
+    }
+    // Check if there is a category matching childGroup + footwearType
+    if (!isBagProduct) {
+      const matched = matchingCatalogCategories.find(
+        (c) =>
+          (c.childGroup?.toLowerCase() === childGroup.toLowerCase() &&
+            c.footwearType?.toLowerCase() === footwearType.toLowerCase()) ||
+          c.name.toLowerCase().includes(childGroup.toLowerCase()),
+      );
+      if (matched?.sizeOptions?.length) return matched.sizeOptions;
+    }
     return [] as string[];
-  }, [selectedChild, selectedParent]);
+  }, [selectedCategoryRecord, isBagProduct, matchingCatalogCategories, childGroup, footwearType]);
 
-  // Selectable size chips shown to user: category-configured sizes + (for Bags/Standard: One Size/Small/Medium/Large) + any custom selected sizes
+  // Selectable size chips shown in Step 2
   const selectableSizeOptions = useMemo(() => {
     const ordered: string[] = [];
     const seen = new Set<string>();
@@ -363,56 +295,65 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
     return ordered;
   }, [categoryConfiguredSizes, isBagProduct, selectedSizes]);
 
-  const applyCategoryDefaults = (
-    nextParent: FootwearCategoryRecord | null,
-    nextChild: FootwearCategoryRecord | null,
-  ) => {
-    const target = nextChild ?? nextParent;
-    if (!target) return;
-    const bagMode =
-      isBagCategoryName(target.name) ||
-      isBagCategoryName(nextParent?.name) ||
-      target.defaultSizingSystem === 'STANDARD';
-    const nextSizing: SizingSystem = bagMode
-      ? 'STANDARD'
-      : target.defaultSizingSystem || nextParent?.defaultSizingSystem || 'EU';
-    setSizingSystem(nextSizing);
-
-    const inferredGender = inferGenderFromCategoryName(target.name);
-    if (inferredGender) setGender(inferredGender);
-    else if (bagMode) setGender('');
-
-    if (!itemId) {
-      const configured =
-        target.sizeOptions.length > 0
-          ? target.sizeOptions
-          : nextParent && nextParent.sizeOptions.length > 0
-            ? nextParent.sizeOptions
-            : [];
-      if (bagMode) {
-        setSelectedSizes(configured.length > 0 ? [configured[0]] : ['One Size']);
-      } else {
-        setSelectedSizes(configured);
+  const handleParentKeyChange = (nextKey: ParentCategoryKey) => {
+    setParentKey(nextKey);
+    setCategoryId('');
+    if (nextKey === 'bags') {
+      setSizingSystem('STANDARD');
+      if (!itemId) {
+        setSelectedSizes(['One Size']);
+      }
+    } else {
+      setSizingSystem((prev) => (prev === 'STANDARD' ? 'EU' : prev));
+      if (!itemId) {
+        setSelectedSizes((prev) =>
+          prev.filter(
+            (sz) => !BAG_STANDARD_SIZES.some((b) => b.toLowerCase() === sz.toLowerCase()),
+          ),
+        );
       }
     }
   };
 
-  const handleParentCategoryChange = (nextParentId: string) => {
-    setParentCategoryId(nextParentId);
-    const nextParent = categories.find((c) => c.id === nextParentId) ?? null;
-    const kids = nextParentId ? childrenByParent.get(nextParentId) ?? [] : [];
-    const nextChild = kids[0] ?? null;
-    setChildCategoryId(nextChild?.id ?? '');
-    applyCategoryDefaults(nextParent, nextChild);
+  const handleCategorySelect = (nextCatId: string) => {
+    setCategoryId(nextCatId);
+    const cat = categories.find((c) => c.id === nextCatId);
+    if (!cat) return;
+    if (parentKey === 'footwear') {
+      if (cat.childGroup && FOOTWEAR_CHILD_GROUPS.includes(cat.childGroup as (typeof FOOTWEAR_CHILD_GROUPS)[number])) {
+        setChildGroup(cat.childGroup);
+      }
+      if (cat.footwearType && FOOTWEAR_TYPES.includes(cat.footwearType as (typeof FOOTWEAR_TYPES)[number])) {
+        setFootwearType(cat.footwearType);
+      }
+      if (cat.defaultSizingSystem && cat.defaultSizingSystem !== 'STANDARD') {
+        setSizingSystem(cat.defaultSizingSystem);
+      }
+      if (!itemId && cat.sizeOptions.length > 0) {
+        setSelectedSizes(cat.sizeOptions);
+      }
+    } else if (!itemId && cat.sizeOptions.length > 0) {
+      setSelectedSizes([cat.sizeOptions[0]]);
+    }
   };
 
-  const handleChildCategoryChange = (nextChildId: string) => {
-    setChildCategoryId(nextChildId);
-    const nextChild = availableChildren.find((c) => c.id === nextChildId) ?? null;
-    applyCategoryDefaults(selectedParent, nextChild);
+  const numPrice = Number(baseSellingPrice) || 0;
+  const numCost = Number(baseCostPrice) || 0;
+  const marginPct =
+    numPrice > 0 && numCost > 0 ? Math.round(((numPrice - numCost) / numPrice) * 100) : null;
+
+  const autoGenerateSku = () => {
+    const nextSku = buildAutoBaseSku(
+      name,
+      brand,
+      model,
+      isBagProduct ? 'BAG' : footwearType,
+    );
+    setSku(nextSku);
+    return nextSku;
   };
 
-  // Automatically sync variants whenever selectedColours, selectedSizes, or sizingSystem changes
+  // Auto-sync variants whenever selectedColours, selectedSizes, or sizingSystem changes
   useEffect(() => {
     if (!hydratedRef.current) return;
     setVariants((prev) => {
@@ -423,7 +364,7 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
 
       const baseCode = (
         sku.trim() ||
-        buildAutoBaseSku(name, brand, model, effectiveCategory?.name || '')
+        buildAutoBaseSku(name, brand, model, isBagProduct ? 'BAG' : footwearType)
       ).toUpperCase();
 
       const next: VariantDraft[] = [];
@@ -448,7 +389,7 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
               costPrice: baseCostPrice || '0',
               sellingPrice: baseSellingPrice || '0',
               reorderLevel: reorderLevel || '3',
-              openingStock: bulkQtyInput || '0',
+              openingStock: defaultOpeningQty || '0',
               isActive: true,
               skuTouched: false,
               barcodeTouched: false,
@@ -462,12 +403,12 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedColours, selectedSizes, sizingSystem]);
 
-  // Keep auto-generated SKUs & barcodes in sync as user types product name / base SKU
+  // Keep unedited variant SKUs & barcodes synced to product name / base SKU
   useEffect(() => {
     if (!hydratedRef.current) return;
     const baseCode = (
       sku.trim() ||
-      buildAutoBaseSku(name, brand, model, effectiveCategory?.name || '')
+      buildAutoBaseSku(name, brand, model, isBagProduct ? 'BAG' : footwearType)
     ).toUpperCase();
 
     setVariants((prev) => {
@@ -485,9 +426,8 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
       });
       return changed ? next : prev;
     });
-  }, [name, sku, brand, model, effectiveCategory?.name]);
+  }, [name, sku, brand, model, isBagProduct, footwearType]);
 
-  // Propagate base cost / selling price changes smoothly to variants that haven't been individually customized
   const handleBaseCostChange = (nextVal: string) => {
     const prevVal = prevBaseCostRef.current;
     prevBaseCostRef.current = nextVal;
@@ -514,34 +454,50 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
     );
   };
 
-  const applyBasePricesToAll = () => {
-    setVariants((prev) =>
-      prev.map((v) => ({
-        ...v,
-        costPrice: baseCostPrice || v.costPrice,
-        sellingPrice: baseSellingPrice || v.sellingPrice,
-      })),
+  const generateVariantCombinations = () => {
+    if (selectedColours.length === 0 || selectedSizes.length === 0) {
+      notify('Add at least one colour and one size before generating variants', 'err');
+      return;
+    }
+    const baseCode = sku.trim().toUpperCase() || autoGenerateSku();
+    const existingMap = new Map(
+      variants.map((v) => [`${v.colourName.toLowerCase()}|${v.sizeName.toLowerCase()}`, v]),
     );
-    notify('Applied cost & selling price to all variants', 'ok');
-  };
 
-  const applyQtyToAll = () => {
-    const cleanQty = String(Math.max(0, parseInt(bulkQtyInput, 10) || 0));
-    setVariants((prev) =>
-      prev.map((v) => (v.id ? v : { ...v, openingStock: cleanQty })),
-    );
-    notify(`Set quantity to ${cleanQty} for all new variants`, 'ok');
-  };
-
-  const numPrice = Number(baseSellingPrice) || 0;
-  const numCost = Number(baseCostPrice) || 0;
-  const marginPct =
-    numPrice > 0 && numCost > 0 ? Math.round(((numPrice - numCost) / numPrice) * 100) : null;
-
-  const autoGenerateSku = () => {
-    const nextSku = buildAutoBaseSku(name, brand, model, effectiveCategory?.name || '');
-    setSku(nextSku);
-    return nextSku;
+    const next: VariantDraft[] = [];
+    let idx = 0;
+    for (const col of selectedColours) {
+      for (const sz of selectedSizes) {
+        const key = `${col.toLowerCase()}|${sz.toLowerCase()}`;
+        const prev = existingMap.get(key);
+        if (prev) {
+          next.push({
+            ...prev,
+            sizingSystem,
+            openingStock: prev.id ? prev.openingStock : prev.openingStock || defaultOpeningQty || '0',
+          });
+        } else {
+          const vSku = buildAutoVariantSku(baseCode, col, sz);
+          next.push({
+            colourName: col,
+            sizeName: sz,
+            sizingSystem,
+            sku: vSku,
+            barcode: makeBarcode(vSku, idx),
+            costPrice: baseCostPrice || '0',
+            sellingPrice: baseSellingPrice || '0',
+            reorderLevel: reorderLevel || '3',
+            openingStock: defaultOpeningQty || '0',
+            isActive: true,
+            skuTouched: false,
+            barcodeTouched: false,
+          });
+        }
+        idx += 1;
+      }
+    }
+    setVariants(next);
+    notify(`Prepared ${next.length} variant combinations`, 'ok');
   };
 
   const toggleColour = (col: string) => {
@@ -588,18 +544,18 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
   };
 
   const handleSaveSizesToCategory = async () => {
-    if (!effectiveCategory || selectedSizes.length === 0) return;
+    if (!selectedCategoryRecord || selectedSizes.length === 0) return;
     setSavingCategorySizes(true);
     try {
       const merged = Array.from(new Set([...categoryConfiguredSizes, ...selectedSizes]));
-      const res = await footwearInventoryService.updateCategory(effectiveCategory.id, {
+      const res = await footwearInventoryService.updateCategory(selectedCategoryRecord.id, {
         sizeOptions: merged,
         defaultSizingSystem: sizingSystem,
       });
       setCategories((prev) =>
         prev.map((c) => (c.id === res.category.id ? { ...c, ...res.category } : c)),
       );
-      notify(`Saved ${merged.length} default size options to ${effectiveCategory.name}`, 'ok');
+      notify(`Saved ${merged.length} size options to ${selectedCategoryRecord.name}`, 'ok');
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Could not save category size options', 'err');
     } finally {
@@ -639,7 +595,7 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
           isPrimary: prev.length === 0,
         },
       ]);
-      notify('Product photo uploaded', 'ok');
+      notify('Product photo uploaded to Supabase Storage', 'ok');
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Image upload failed', 'err');
     } finally {
@@ -650,31 +606,62 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
 
   const handleSave = async () => {
     if (!name.trim()) {
-      notify('Enter an article number or product name', 'err');
-      return;
-    }
-    if (parentCategories.length > 0 && !parentCategoryId) {
-      notify('Select a category first', 'err');
-      return;
-    }
-    if (availableChildren.length > 0 && !childCategoryId) {
-      notify(`Select a child category under ${selectedParent?.name || 'this category'}`, 'err');
+      notify('Enter a product name or article number', 'err');
+      setStep(1);
       return;
     }
     if (numPrice <= 0) {
       notify('Enter a valid selling price', 'err');
-      return;
-    }
-    if (variants.length === 0) {
-      notify('Select at least one colour and one size so variants can be created', 'err');
+      setStep(2);
       return;
     }
 
     const finalSku = (sku.trim() || autoGenerateSku()).toUpperCase();
-    const resolvedCategoryId = childCategoryId || parentCategoryId || null;
-    const resolvedFootwearType = isBagProduct
-      ? effectiveCategory?.name || 'Bags / Handbags'
-      : footwearType || effectiveCategory?.name || FOOTWEAR_TYPES[0];
+    let finalVariants = variants;
+    if (finalVariants.length === 0 && selectedColours.length > 0 && selectedSizes.length > 0) {
+      const built: VariantDraft[] = [];
+      let idx = 0;
+      for (const col of selectedColours) {
+        for (const sz of selectedSizes) {
+          const vSku = buildAutoVariantSku(finalSku, col, sz);
+          built.push({
+            colourName: col,
+            sizeName: sz,
+            sizingSystem,
+            sku: vSku,
+            barcode: makeBarcode(vSku, idx),
+            costPrice: String(numCost),
+            sellingPrice: String(numPrice),
+            reorderLevel: reorderLevel || '3',
+            openingStock: defaultOpeningQty || '0',
+            isActive: true,
+          });
+          idx += 1;
+        }
+      }
+      finalVariants = built;
+    }
+
+    if (finalVariants.length === 0) {
+      notify('Select at least one colour and one size to generate variants', 'err');
+      setStep(2);
+      return;
+    }
+
+    // Resolve categoryId: use chosen catalog category, or auto-match the parent Bags / Handbags category if present
+    let resolvedCategoryId = categoryId || null;
+    if (!resolvedCategoryId && isBagProduct) {
+      const bagParent = categories.find(
+        (c) => !c.parentId && isBagLikeText(c.name) && c.isActive,
+      );
+      if (bagParent) resolvedCategoryId = bagParent.id;
+    }
+
+    const finalSizingSystem: SizingSystem = isBagProduct
+      ? 'STANDARD'
+      : sizingSystem === 'STANDARD'
+        ? 'EU'
+        : sizingSystem;
 
     setSaving(true);
     try {
@@ -683,13 +670,13 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
         brand: brand.trim() || null,
         model: model.trim() || null,
         categoryId: resolvedCategoryId,
-        footwearType: resolvedFootwearType,
-        gender: gender || inferGenderFromCategoryName(effectiveCategory?.name) || null,
+        footwearType: isBagProduct ? 'Bags / Handbags' : footwearType,
+        gender: isBagProduct ? null : childGroup,
         description: description.trim() || null,
         material: material.trim() || null,
-        upperMaterial: upperMaterial.trim() || null,
-        soleMaterial: soleMaterial.trim() || null,
-        sizingSystem,
+        upperMaterial: isBagProduct ? null : upperMaterial.trim() || null,
+        soleMaterial: isBagProduct ? null : soleMaterial.trim() || null,
+        sizingSystem: finalSizingSystem,
         sku: finalSku,
         baseCostPrice: numCost,
         baseSellingPrice: numPrice,
@@ -700,14 +687,12 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
           imageUrl: img.imageUrl ?? null,
           isPrimary: img.isPrimary || i === 0,
         })),
-        variants: variants.map((v, idx) => ({
+        variants: finalVariants.map((v) => ({
           ...(v.id ? { id: v.id } : {}),
           colourName: v.colourName,
           sizeName: v.sizeName,
-          sizingSystem: v.sizingSystem,
-          sku:
-            v.sku.trim().toUpperCase() ||
-            `${finalSku}-${makeSkuPart(v.colourName, 3)}-${v.sizeName.replace(/[^A-Za-z0-9.]/g, '').toUpperCase() || idx + 1}`,
+          sizingSystem: finalSizingSystem,
+          sku: v.sku.trim().toUpperCase(),
           barcode: v.barcode.trim().toUpperCase() || undefined,
           costPrice: Number(v.costPrice) || numCost,
           sellingPrice: Number(v.sellingPrice) || numPrice,
@@ -722,7 +707,7 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
         notify(`Updated ${name.trim()}`, 'ok');
       } else {
         await footwearInventoryService.createProduct(payload);
-        notify(`Added ${name.trim()} (${variants.length} variants) to stock`, 'ok');
+        notify(`Added ${name.trim()} (${finalVariants.length} variants) to stock`, 'ok');
       }
       router.push('/inventory');
     } catch (err) {
@@ -737,623 +722,594 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
     [variants, previewIdx],
   );
 
-  const totalNewQty = useMemo(
-    () => variants.reduce((sum, v) => sum + Math.max(0, Number(v.openingStock) || 0), 0),
-    [variants],
-  );
-
   const hasUnsavedSizesForCategory = useMemo(() => {
-    if (!effectiveCategory || selectedSizes.length === 0) return false;
+    if (!selectedCategoryRecord || selectedSizes.length === 0) return false;
     const existingLower = new Set(categoryConfiguredSizes.map((s) => s.toLowerCase()));
     return selectedSizes.some((s) => !existingLower.has(s.toLowerCase()));
-  }, [effectiveCategory, selectedSizes, categoryConfiguredSizes]);
+  }, [selectedCategoryRecord, selectedSizes, categoryConfiguredSizes]);
+
+  const sizingOptions = isBagProduct
+    ? [{ value: 'STANDARD', label: 'Standard (One Size / S / M / L)' }]
+    : FOOTWEAR_SIZING_SYSTEMS.map((sys) => ({
+        value: sys,
+        label: `${sys} Sizing (${sys === 'EU' ? 'e.g. 38–46' : sys === 'UK' ? 'e.g. 5–12' : 'e.g. 6–13'})`,
+      }));
 
   if (loading) {
     return (
-      <div className="max-w-[920px] space-y-5">
+      <div className="max-w-[880px] space-y-5">
         <PageHeader eyebrow="Stock catalog" title="Loading product..." />
         <Card className="p-8 text-center text-[14px] text-[#52666A]">
-          Fetching product details, variants, and barcodes from Supabase...
+          Fetching product attributes, variants, and barcodes from Supabase...
         </Card>
       </div>
     );
   }
 
   return (
-    <div className="max-w-[960px] space-y-5 pb-8">
+    <div className="max-w-[920px] space-y-5">
       <PageHeader
-        eyebrow={itemId ? `Edit product · ${sku}` : 'New stock item'}
+        eyebrow={itemId ? `Edit product · ${sku}` : 'New stock product'}
         title={itemId ? name || 'Edit product' : 'Add product'}
-        subtitle="Select a category, add colours and sizes, and enter quantities for each variant automatically."
+        subtitle={
+          isBagProduct
+            ? 'Configure bag details, Standard S / M / L or custom sizes, colours, barcodes, and opening stock.'
+            : 'Configure footwear specs, EU/UK/US size matrix, colours, barcodes, and opening branch stock.'
+        }
         actions={
-          <div className="flex items-center gap-2">
-            <Link href="/inventory/categories">
-              <Button variant="secondary" size="sm">
-                <FolderKanban className="w-4 h-4" /> Categories
-              </Button>
-            </Link>
-            <Link href="/inventory">
-              <Button variant="secondary" size="sm">
-                <ArrowLeft className="w-4 h-4" /> Back to stock
-              </Button>
-            </Link>
-          </div>
+          <Link href="/inventory">
+            <Button variant="secondary" size="sm">
+              <ArrowLeft className="w-4 h-4" /> Back to stock
+            </Button>
+          </Link>
         }
       />
 
-      {/* Section 1: Category & Product Info */}
-      <Card className="space-y-4">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div>
-            <h2 className="font-display text-[16px] font-bold text-[#0B2A2F]">
-              1. Category &amp; product info
-            </h2>
-            <p className="text-[12px] text-[#52666A]">
-              Choose parent category (e.g. Footwear or Bags / Handbags) and child category if applicable.
-            </p>
+      {/* Original 3-tab Stepper */}
+      <div className="grid grid-cols-3 gap-2">
+        {[
+          { n: 1 as const, label: '1. Product details' },
+          { n: 2 as const, label: '2. Pricing & variants' },
+          { n: 3 as const, label: '3. Barcodes & stock' },
+        ].map((s) => (
+          <button
+            key={s.n}
+            type="button"
+            onClick={() => setStep(s.n)}
+            className={`p-3 rounded-[11px] border text-start text-[13px] font-semibold transition-all ${
+              step === s.n
+                ? 'border-[#08343A] bg-[#08343A] text-white'
+                : step > s.n
+                  ? 'border-[#8AC7A4] bg-[#E3F4EA] text-[#14532D]'
+                  : 'border-[#E7E0D7] bg-white text-[#52666A]'
+            }`}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Step 1: Product Details */}
+      {step === 1 && (
+        <Card className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Select
+              label="Parent category"
+              value={parentKey}
+              onChange={(e) => handleParentKeyChange(e.target.value as ParentCategoryKey)}
+              options={PARENT_CATEGORY_OPTIONS.map((opt) => ({
+                value: opt.key,
+                label: opt.label,
+              }))}
+            />
+            {!isBagProduct ? (
+              <Select
+                label="Child category"
+                value={childGroup}
+                onChange={(e) => setChildGroup(e.target.value)}
+                options={FOOTWEAR_CHILD_GROUPS.map((g) => ({ value: g, label: g }))}
+              />
+            ) : (
+              <Select
+                label="Catalog category"
+                value={categoryId}
+                onChange={(e) => handleCategorySelect(e.target.value)}
+                options={[
+                  { value: '', label: 'Auto-assign (Bags / Handbags)' },
+                  ...matchingCatalogCategories.map((c) => ({
+                    value: c.id,
+                    label: c.parentName ? `${c.parentName} › ${c.name}` : c.name,
+                  })),
+                ]}
+              />
+            )}
           </div>
-          {effectiveCategory && (
-            <Badge tone="neutral">
-              {selectedChild && selectedParent
-                ? `${selectedParent.name} › ${selectedChild.name}`
-                : effectiveCategory.name}
-            </Badge>
-          )}
-        </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Select
-            label="Category"
-            value={parentCategoryId}
-            onChange={(e) => handleParentCategoryChange(e.target.value)}
-            options={[
-              {
-                value: '',
-                label:
-                  parentCategories.length > 0
-                    ? 'Select parent category...'
-                    : 'No categories yet — create in Categories',
-              },
-              ...parentCategories.map((c) => ({
-                value: c.id,
-                label: c.name,
-              })),
-            ]}
-          />
-
-          {availableChildren.length > 0 ? (
-            <Select
-              label={`${selectedParent?.name || 'Parent'} sub-category`}
-              value={childCategoryId}
-              onChange={(e) => handleChildCategoryChange(e.target.value)}
-              options={[
-                { value: '', label: 'Select child category...' },
-                ...availableChildren.map((c) => ({
-                  value: c.id,
-                  label: c.name,
-                })),
-              ]}
-            />
-          ) : (
-            <Select
-              label="Product status"
-              value={isActive ? 'active' : 'inactive'}
-              onChange={(e) => setIsActive(e.target.value === 'active')}
-              options={[
-                { value: 'active', label: 'Active (visible on POS)' },
-                { value: 'inactive', label: 'Inactive (hidden from POS)' },
-              ]}
-            />
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="sm:col-span-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
               label="Article number / product name"
               placeholder={
                 isBagProduct
                   ? 'e.g. Handbag 001 / Classic Leather Tote'
-                  : 'e.g. ART-402 Runner / Nike Pegasus 40'
+                  : 'e.g. Nike Air Zoom Pegasus 40 / ART-402'
               }
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
+            <Input
+              label="Brand"
+              placeholder={
+                isBagProduct
+                  ? 'e.g. Jafferjees, Stylo, Aldo, Zara'
+                  : 'e.g. Nike, Adidas, Bata, Servis, Skechers'
+              }
+              value={brand}
+              onChange={(e) => setBrand(e.target.value)}
+            />
           </div>
-          <Input
-            label="Base SKU (optional)"
-            placeholder="Auto-generated if empty"
-            value={sku}
-            onChange={(e) => setSku(e.target.value.toUpperCase())}
-            suffixNode={
-              <button
-                type="button"
-                onClick={autoGenerateSku}
-                className="text-[12px] font-semibold text-[#08343A] flex items-center gap-1"
-              >
-                <Sparkles className="w-3.5 h-3.5" /> Auto
-              </button>
-            }
-          />
-        </div>
 
-        {/* Optional Product Image */}
-        <div className="space-y-2 pt-2 border-t border-[#F1EBE3]">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="text-[13px] font-semibold text-[#0B2A2F]">
-              Product image (optional){images.length > 0 ? ` · ${images.length}` : ''}
-            </div>
-            <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] border border-[#D6CDC1] bg-white text-[12px] font-semibold text-[#0B2A2F] cursor-pointer hover:bg-[#F8F4EF]">
-              <Upload className="w-3.5 h-3.5" />
-              {uploadingImg ? 'Uploading...' : 'Upload photo'}
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                onChange={handleImageUpload}
-                disabled={uploadingImg}
-                className="hidden"
-              />
-            </label>
-          </div>
-          {images.length > 0 && (
-            <div className="flex flex-wrap gap-2.5">
-              {images.map((img, i) => (
-                <div
-                  key={img.storagePath}
-                  className="relative w-20 h-20 rounded-[10px] border border-[#E7E0D7] overflow-hidden bg-[#F1EBE3]"
-                >
-                  {img.signedUrl && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={img.signedUrl}
-                      alt="Product preview"
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover"
-                    />
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setImages((prev) => prev.filter((_, idx) => idx !== i))}
-                    className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center"
-                    aria-label="Remove image"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Collapsible Optional Product Attributes */}
-        <div className="pt-2 border-t border-[#F1EBE3]">
-          <button
-            type="button"
-            onClick={() => setShowMoreDetails((v) => !v)}
-            className="text-[13px] font-semibold text-[#08343A] flex items-center gap-1.5 hover:underline"
-          >
-            {showMoreDetails ? (
-              <ChevronUp className="w-4 h-4" />
-            ) : (
-              <ChevronDown className="w-4 h-4" />
-            )}
-            More product details (brand, style, materials, notes)
-          </button>
-
-          {showMoreDetails && (
-            <div className="mt-4 space-y-4">
+          {!isBagProduct ? (
+            <>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <Input
-                  label="Brand (optional)"
-                  placeholder="e.g. Nike, Bata, Servis, Aldo"
-                  value={brand}
-                  onChange={(e) => setBrand(e.target.value)}
-                />
-                <Input
-                  label="Model / style code (optional)"
-                  placeholder="e.g. Runner Pro / Classic Tote"
+                  label="Model / style code"
+                  placeholder="e.g. Pegasus 40 / Runner Pro"
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
                 />
-                {availableChildren.length > 0 && (
-                  <Select
-                    label="Product status"
-                    value={isActive ? 'active' : 'inactive'}
-                    onChange={(e) => setIsActive(e.target.value === 'active')}
-                    options={[
-                      { value: 'active', label: 'Active (visible on POS)' },
-                      { value: 'inactive', label: 'Inactive (hidden from POS)' },
-                    ]}
-                  />
-                )}
+                <Select
+                  label="Footwear category"
+                  value={footwearType}
+                  onChange={(e) => setFootwearType(e.target.value)}
+                  options={FOOTWEAR_TYPES.map((t) => ({ value: t, label: t }))}
+                />
+                <Select
+                  label="Catalog category"
+                  value={categoryId}
+                  onChange={(e) => handleCategorySelect(e.target.value)}
+                  options={[
+                    { value: '', label: `Auto-assign (${footwearType})` },
+                    ...matchingCatalogCategories.map((c) => ({
+                      value: c.id,
+                      label: c.parentName ? `${c.parentName} › ${c.name}` : c.name,
+                    })),
+                  ]}
+                />
               </div>
-
-              {!isBagProduct && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <Select
-                    label="Footwear style (optional)"
-                    value={footwearType}
-                    onChange={(e) => setFootwearType(e.target.value)}
-                    options={FOOTWEAR_TYPES.map((t) => ({ value: t, label: t }))}
-                  />
-                  <Select
-                    label="Gender tag (optional)"
-                    value={gender}
-                    onChange={(e) => setGender(e.target.value)}
-                    options={[
-                      { value: '', label: 'Auto from category' },
-                      ...FOOTWEAR_GENDERS.map((g) => ({ value: g, label: g })),
-                    ]}
-                  />
-                </div>
-              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <Input
                   label="Material"
-                  placeholder="e.g. Leather, Canvas, Mesh"
+                  placeholder="e.g. Full-grain leather, Breathable mesh"
                   value={material}
                   onChange={(e) => setMaterial(e.target.value)}
                 />
-                {!isBagProduct && (
-                  <>
-                    <Input
-                      label="Upper material"
-                      placeholder="e.g. Knit / Synthetic"
-                      value={upperMaterial}
-                      onChange={(e) => setUpperMaterial(e.target.value)}
-                    />
-                    <Input
-                      label="Sole material"
-                      placeholder="e.g. Rubber / EVA"
-                      value={soleMaterial}
-                      onChange={(e) => setSoleMaterial(e.target.value)}
-                    />
-                  </>
-                )}
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[13px] font-semibold text-[#0B2A2F]">
-                  Description / notes
-                </label>
-                <textarea
-                  rows={2}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Fit guidance, compartments, or care instructions..."
-                  className="field rounded-[10px] border border-[#8A8276] p-3 text-[13px] bg-white"
+                <Input
+                  label="Upper material"
+                  placeholder="e.g. Engineered knit / Synthetic leather"
+                  value={upperMaterial}
+                  onChange={(e) => setUpperMaterial(e.target.value)}
+                />
+                <Input
+                  label="Sole material"
+                  placeholder="e.g. Rubber / EVA foam / TPR"
+                  value={soleMaterial}
+                  onChange={(e) => setSoleMaterial(e.target.value)}
                 />
               </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Select
+                  label="Product status"
+                  value={isActive ? 'active' : 'inactive'}
+                  onChange={(e) => setIsActive(e.target.value === 'active')}
+                  options={[
+                    { value: 'active', label: 'Active (sellable on POS)' },
+                    { value: 'inactive', label: 'Inactive (hidden from POS)' },
+                  ]}
+                />
+              </div>
+            </>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <Input
+                label="Model / style code"
+                placeholder="e.g. Classic Tote / Crossbody 01"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+              />
+              <Input
+                label="Material"
+                placeholder="e.g. Genuine leather, Canvas, PU"
+                value={material}
+                onChange={(e) => setMaterial(e.target.value)}
+              />
+              <Select
+                label="Product status"
+                value={isActive ? 'active' : 'inactive'}
+                onChange={(e) => setIsActive(e.target.value === 'active')}
+                options={[
+                  { value: 'active', label: 'Active (sellable on POS)' },
+                  { value: 'inactive', label: 'Inactive (hidden from POS)' },
+                ]}
+              />
             </div>
           )}
-        </div>
-      </Card>
 
-      {/* Section 2: Pricing, Colours & Configurable Sizes */}
-      <Card className="space-y-5">
-        <div>
-          <h2 className="font-display text-[16px] font-bold text-[#0B2A2F]">
-            2. Pricing, colours &amp; sizes
-          </h2>
-          <p className="text-[12px] text-[#52666A]">
-            Set prices and pick colours &amp; sizes — variants are generated automatically below.
-          </p>
-        </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[13px] font-semibold text-[#0B2A2F]">Description</label>
+            <textarea
+              rows={2}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder={
+                isBagProduct
+                  ? 'Compartments, strap details, or care instructions...'
+                  : 'Cushioning notes, fit guidance, or care instructions...'
+              }
+              className="field rounded-[10px] border border-[#8A8276] p-3 text-[13px] bg-white"
+            />
+          </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <Input
-            label={`Cost price (Rs / ${unitLabel})`}
-            type="number"
-            min={0}
-            placeholder="e.g. 2500"
-            value={baseCostPrice}
-            onChange={(e) => handleBaseCostChange(e.target.value)}
-          />
-          <Input
-            label={`Selling price (Rs / ${unitLabel})`}
-            type="number"
-            min={0}
-            placeholder="e.g. 4200"
-            value={baseSellingPrice}
-            onChange={(e) => handleBaseSellingChange(e.target.value)}
-          />
-          <Input
-            label="Low-stock alert"
-            type="number"
-            min={0}
-            value={reorderLevel}
-            onChange={(e) => setReorderLevel(e.target.value)}
-          />
-        </div>
+          {/* Product Images */}
+          <div className="space-y-2 pt-2 border-t border-[#F1EBE3]">
+            <div className="flex items-center justify-between">
+              <div className="text-[13px] font-semibold text-[#0B2A2F]">
+                Product photos ({images.length})
+              </div>
+              <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] border border-[#D6CDC1] bg-white text-[12px] font-semibold text-[#0B2A2F] cursor-pointer hover:bg-[#F8F4EF]">
+                <Upload className="w-3.5 h-3.5" />
+                {uploadingImg ? 'Uploading...' : 'Upload photo'}
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  onChange={handleImageUpload}
+                  disabled={uploadingImg}
+                  className="hidden"
+                />
+              </label>
+            </div>
+            {images.length > 0 && (
+              <div className="flex flex-wrap gap-2.5">
+                {images.map((img, i) => (
+                  <div
+                    key={img.storagePath}
+                    className="relative w-20 h-20 rounded-[10px] border border-[#E7E0D7] overflow-hidden bg-[#F1EBE3]"
+                  >
+                    {img.signedUrl && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={img.signedUrl}
+                        alt="Product preview"
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover"
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setImages((prev) => prev.filter((_, idx) => idx !== i))}
+                      className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center"
+                      aria-label="Remove image"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
-        {marginPct !== null && (
-          <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex justify-end pt-2">
+            <Button variant="primary" onClick={() => setStep(2)}>
+              Next: Pricing &amp; variants
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {/* Step 2: Pricing & Variants */}
+      {step === 2 && (
+        <Card className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+            <Input
+              label="Base SKU"
+              placeholder={isBagProduct ? 'e.g. HANDBAG001' : 'e.g. NKE-PEG40'}
+              value={sku}
+              onChange={(e) => setSku(e.target.value.toUpperCase())}
+              suffixNode={
+                <button
+                  type="button"
+                  onClick={autoGenerateSku}
+                  className="text-[12px] font-semibold text-[#08343A] flex items-center gap-1"
+                >
+                  <Sparkles className="w-3.5 h-3.5" /> Auto
+                </button>
+              }
+            />
+            <Input
+              label="Selling price (Rs)"
+              type="number"
+              placeholder="e.g. 6500"
+              value={baseSellingPrice}
+              onChange={(e) => handleBaseSellingChange(e.target.value)}
+            />
+            <Input
+              label="Cost price (Rs)"
+              type="number"
+              placeholder="e.g. 4200"
+              value={baseCostPrice}
+              onChange={(e) => handleBaseCostChange(e.target.value)}
+            />
+            <Input
+              label="Low-stock alert"
+              type="number"
+              min={0}
+              value={reorderLevel}
+              onChange={(e) => setReorderLevel(e.target.value)}
+            />
+          </div>
+
+          {marginPct !== null && (
             <div className="flex items-center gap-2">
               <Badge tone={marginPct >= 20 ? 'ok' : 'warn'}>Margin: {marginPct}%</Badge>
               <span className="text-[12px] text-[#52666A] num">
                 Profit per {unitLabel}: {formatRs(numPrice - numCost)}
               </span>
             </div>
-            {variants.length > 0 && (
-              <Button size="sm" variant="secondary" type="button" onClick={applyBasePricesToAll}>
-                Apply base prices to all variants
-              </Button>
-            )}
-          </div>
-        )}
+          )}
 
-        {/* Colours */}
-        <div className="space-y-3 pt-3 border-t border-[#F1EBE3]">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="text-[13px] font-semibold text-[#0B2A2F]">
-              Colours ({selectedColours.length} selected)
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={customColourInput}
-                onChange={(e) => setCustomColourInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    addCustomColour();
-                  }
-                }}
-                placeholder="Add custom colour..."
-                className="field h-[34px] px-2.5 rounded-[8px] border border-[#8A8276] text-[12px] bg-white"
-              />
-              <Button size="sm" variant="secondary" type="button" onClick={addCustomColour}>
-                <Plus className="w-3.5 h-3.5" /> Add
-              </Button>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {Array.from(new Set([...SWATCH_LIST.slice(0, 14), ...selectedColours])).map((c) => {
-              const active = selectedColours.includes(c);
-              return (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => toggleColour(c)}
-                  className={`px-2.5 py-1.5 rounded-[9px] border text-[12px] font-semibold flex items-center gap-1.5 transition-colors ${
-                    active
-                      ? 'border-[#08343A] bg-[#08343A] text-white'
-                      : 'border-[#D6CDC1] bg-white text-[#0B2A2F] hover:bg-[#F8F4EF]'
-                  }`}
-                >
-                  <span
-                    className="w-3 h-3 rounded-full border border-black/20"
-                    style={{ backgroundColor: SWATCHES[c] || '#8C918E' }}
-                  />
-                  {c}
-                  {active && <Check className="w-3 h-3" />}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Configurable Sizes */}
-        <div className="space-y-3 pt-3 border-t border-[#F1EBE3]">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div>
+          {/* Configurable Sizing System & Sizes */}
+          <div className="space-y-3 pt-3 border-t border-[#F1EBE3]">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="text-[13px] font-semibold text-[#0B2A2F]">
                 Sizes ({selectedSizes.length} selected)
               </div>
-              <div className="text-[12px] text-[#52666A]">
-                {isBagProduct
-                  ? 'Pick One Size, Small, Medium, Large, or add custom bag sizes.'
-                  : effectiveCategory
-                    ? `Configurable sizes for ${effectiveCategory.name}. Click to toggle or add custom sizes.`
-                    : 'Select a category or add sizes below.'}
-              </div>
+              {hasUnsavedSizesForCategory && selectedCategoryRecord && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  type="button"
+                  disabled={savingCategorySizes}
+                  onClick={() => void handleSaveSizesToCategory()}
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  {savingCategorySizes
+                    ? 'Saving...'
+                    : `Save sizes to ${selectedCategoryRecord.name}`}
+                </Button>
+              )}
             </div>
-            {hasUnsavedSizesForCategory && effectiveCategory && (
-              <Button
-                size="sm"
-                variant="secondary"
-                type="button"
-                disabled={savingCategorySizes}
-                onClick={() => void handleSaveSizesToCategory()}
-              >
-                <Save className="w-3.5 h-3.5" />
-                {savingCategorySizes
-                  ? 'Saving...'
-                  : `Save sizes to ${effectiveCategory.name}`}
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+              <Select
+                label="Sizing system"
+                value={isBagProduct ? 'STANDARD' : sizingSystem}
+                onChange={(e) => setSizingSystem(e.target.value as SizingSystem)}
+                options={sizingOptions}
+              />
+              <Input
+                label="Add sizes (comma separated)"
+                placeholder={
+                  isBagProduct
+                    ? 'e.g. Mini, Extra Large, 14 inch'
+                    : sizingSystem === 'EU'
+                      ? 'e.g. 39, 40, 41, 42, 43, 44'
+                      : 'e.g. 7, 8, 9, 10, 10.5'
+                }
+                value={customSizeInput}
+                onChange={(e) => setCustomSizeInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addCustomSizes();
+                  }
+                }}
+              />
+              <Button variant="secondary" type="button" onClick={addCustomSizes}>
+                <Plus className="w-4 h-4" /> Add sizes
               </Button>
+            </div>
+
+            {selectableSizeOptions.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {selectableSizeOptions.map((sz) => {
+                  const active = selectedSizes.some(
+                    (s) => s.toLowerCase() === sz.toLowerCase(),
+                  );
+                  return (
+                    <button
+                      key={sz}
+                      type="button"
+                      onClick={() => toggleSize(sz)}
+                      className={`px-2.5 py-1.5 rounded-[8px] border text-[12px] font-semibold flex items-center gap-1 transition-colors ${
+                        active
+                          ? 'border-[#08343A] bg-[#08343A] text-white'
+                          : 'border-[#D6CDC1] bg-white text-[#0B2A2F] hover:bg-[#F8F4EF]'
+                      }`}
+                    >
+                      {formatVariantSizeLabel(sz, isBagProduct ? 'STANDARD' : sizingSystem)}
+                      {active && <Check className="w-3 h-3" />}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="p-3 rounded-[10px] border border-dashed border-[#D6CDC1] bg-[#FBF8F4] text-[12px] text-[#52666A]">
+                No default sizes configured for this category yet. Enter sizes above (e.g.{' '}
+                <span className="mono">40, 41, 42, 43</span>) or configure them in{' '}
+                <Link href="/inventory/categories" className="font-semibold text-[#08343A] underline">
+                  Categories
+                </Link>
+                .
+              </div>
             )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-            <Select
-              label="Size format"
-              value={sizingSystem}
-              onChange={(e) => setSizingSystem(e.target.value as SizingSystem)}
-              options={SIZING_SYSTEMS.map((sys) => ({
-                value: sys,
-                label:
-                  sys === 'STANDARD'
-                    ? 'Standard (One Size / S / M / L / Custom)'
-                    : `${sys} Sizing`,
-              }))}
-            />
-            <Input
-              label="Add custom sizes (comma separated)"
-              placeholder={
-                sizingSystem === 'STANDARD'
-                  ? 'e.g. Mini, Extra Large, 14 inch'
-                  : 'e.g. 38, 39, 40, 41, 42'
-              }
-              value={customSizeInput}
-              onChange={(e) => setCustomSizeInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  addCustomSizes();
-                }
-              }}
-            />
-            <Button variant="secondary" type="button" onClick={addCustomSizes}>
-              <Plus className="w-4 h-4" /> Add sizes
-            </Button>
-          </div>
+          {/* Dynamic Colours */}
+          <div className="space-y-3 pt-3 border-t border-[#F1EBE3]">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="text-[13px] font-semibold text-[#0B2A2F]">
+                Colours ({selectedColours.length} selected)
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={customColourInput}
+                  onChange={(e) => setCustomColourInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addCustomColour();
+                    }
+                  }}
+                  placeholder="Custom colour name..."
+                  className="field h-[34px] px-2.5 rounded-[8px] border border-[#8A8276] text-[12px] bg-white"
+                />
+                <Button size="sm" variant="secondary" type="button" onClick={addCustomColour}>
+                  <Plus className="w-3.5 h-3.5" /> Add
+                </Button>
+              </div>
+            </div>
 
-          {selectableSizeOptions.length > 0 ? (
             <div className="flex flex-wrap gap-2">
-              {selectableSizeOptions.map((sz) => {
-                const active = selectedSizes.some(
-                  (s) => s.toLowerCase() === sz.toLowerCase(),
-                );
+              {Array.from(new Set([...SWATCH_LIST.slice(0, 14), ...selectedColours])).map((c) => {
+                const active = selectedColours.includes(c);
                 return (
                   <button
-                    key={sz}
+                    key={c}
                     type="button"
-                    onClick={() => toggleSize(sz)}
-                    className={`px-3 py-1.5 rounded-[9px] border text-[12px] font-semibold flex items-center gap-1.5 transition-colors ${
+                    onClick={() => toggleColour(c)}
+                    className={`px-2.5 py-1.5 rounded-[9px] border text-[12px] font-semibold flex items-center gap-1.5 ${
                       active
                         ? 'border-[#08343A] bg-[#08343A] text-white'
-                        : 'border-[#D6CDC1] bg-white text-[#0B2A2F] hover:bg-[#F8F4EF]'
+                        : 'border-[#D6CDC1] bg-white text-[#0B2A2F]'
                     }`}
                   >
-                    {formatVariantSizeLabel(sz, sizingSystem)}
+                    <span
+                      className="w-3 h-3 rounded-full border border-black/20"
+                      style={{ backgroundColor: SWATCHES[c] || '#8C918E' }}
+                    />
+                    {c}
                     {active && <Check className="w-3 h-3" />}
                   </button>
                 );
               })}
             </div>
-          ) : (
-            <div className="p-3 rounded-[10px] border border-dashed border-[#D6CDC1] bg-[#FBF8F4] text-[12px] text-[#52666A]">
-              No sizes configured for{' '}
-              <strong className="text-[#0B2A2F]">
-                {effectiveCategory?.name || 'this category'}
-              </strong>{' '}
-              yet. Enter sizes above (e.g. <span className="mono">40, 41, 42, 43</span>) or
-              configure default sizes in{' '}
-              <Link href="/inventory/categories" className="font-semibold text-[#08343A] underline">
-                Categories
-              </Link>
-              .
-            </div>
-          )}
-        </div>
-      </Card>
-
-      {/* Section 3: Auto-generated Variants & Quantities */}
-      <Card className="space-y-4">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <h2 className="font-display text-[16px] font-bold text-[#0B2A2F]">
-              3. Variants &amp; quantities ({variants.length})
-            </h2>
-            <p className="text-[12px] text-[#52666A]">
-              Auto-generated for every colour &times; size combination. Enter quantities against each
-              row ({totalNewQty} total {unitPlural}).
-            </p>
           </div>
-          {!itemId && (
-            <div className="flex items-end gap-2">
-              <div className="w-[110px]">
+
+          <div className="flex flex-wrap items-end justify-between gap-3 pt-3 border-t border-[#F1EBE3]">
+            {!itemId && (
+              <div className="w-[220px]">
                 <Input
-                  label="Quick qty"
+                  label={`Default opening ${unitPlural} / variant`}
                   type="number"
                   min={0}
-                  value={bulkQtyInput}
-                  onChange={(e) => setBulkQtyInput(e.target.value)}
+                  value={defaultOpeningQty}
+                  onChange={(e) => setDefaultOpeningQty(e.target.value)}
                 />
               </div>
-              <Button size="sm" variant="secondary" type="button" onClick={applyQtyToAll}>
-                Set all
-              </Button>
-            </div>
-          )}
-        </div>
-
-        {variants.length === 0 ? (
-          <div className="p-6 rounded-[11px] border border-dashed border-[#D6CDC1] bg-[#FBF8F4] text-center text-[13px] text-[#52666A]">
-            Select at least one <strong>colour</strong> and one <strong>size</strong> above to
-            automatically build the variant matrix.
+            )}
+            <Button variant="dark" type="button" onClick={generateVariantCombinations}>
+              <Sparkles className="w-4 h-4" /> Generate {selectedColours.length * selectedSizes.length} variant rows
+            </Button>
           </div>
-        ) : (
+
+          <div className="flex justify-between pt-2">
+            <Button variant="secondary" onClick={() => setStep(1)}>
+              Back
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                if (variants.length === 0 && selectedColours.length > 0 && selectedSizes.length > 0) {
+                  generateVariantCombinations();
+                }
+                setStep(3);
+              }}
+            >
+              Next: Barcodes &amp; stock ({variants.length || selectedColours.length * selectedSizes.length})
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {/* Step 3: Barcodes & Stock */}
+      {step === 3 && (
+        <Card className="space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <h3 className="font-display text-[15px] font-bold text-[#0B2A2F]">
+                Product variants ({variants.length})
+              </h3>
+              <p className="text-[12px] text-[#52666A]">
+                Edit individual SKU, barcode, cost, selling price, or opening stock per colour &amp; size.
+              </p>
+            </div>
+            <Button size="sm" variant="secondary" type="button" onClick={generateVariantCombinations}>
+              <Sparkles className="w-3.5 h-3.5" /> Sync from step 2
+            </Button>
+          </div>
+
           <div className="overflow-x-auto border border-[#E7E0D7] rounded-[11px]">
             <table className="w-full text-[12px]">
               <thead className="bg-[#FBF8F4] text-[#52666A] text-left">
                 <tr>
-                  <th className="p-2.5 font-semibold">Colour &amp; Size</th>
-                  <th className="p-2.5 font-semibold text-end">
-                    {itemId ? 'Stock / Opening' : `Qty (${unitPlural})`}
-                  </th>
-                  <th className="p-2.5 font-semibold text-end">Cost (Rs)</th>
-                  <th className="p-2.5 font-semibold text-end">Selling (Rs)</th>
+                  <th className="p-2.5 font-semibold">Variant</th>
                   <th className="p-2.5 font-semibold">SKU</th>
                   <th className="p-2.5 font-semibold">Barcode</th>
-                  <th className="p-2.5 font-semibold text-center">Remove</th>
+                  <th className="p-2.5 font-semibold text-end">Cost</th>
+                  <th className="p-2.5 font-semibold text-end">Price</th>
+                  {!itemId && <th className="p-2.5 font-semibold text-end">Opening</th>}
+                  <th className="p-2.5 font-semibold text-center">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#F1EBE3]">
                 {variants.map((v, idx) => (
                   <tr key={`${v.colourName}-${v.sizeName}-${idx}`} className="bg-white">
                     <td className="p-2 font-semibold text-[#0B2A2F] whitespace-nowrap">
-                      <span className="inline-flex items-center gap-2">
-                        <span
-                          className="w-2.5 h-2.5 rounded-full border border-black/20 shrink-0"
-                          style={{ backgroundColor: SWATCHES[v.colourName] || '#8C918E' }}
-                        />
-                        {formatVariantDisplay(v.colourName, v.sizeName, v.sizingSystem)}
-                      </span>
-                    </td>
-                    <td className="p-2 text-end">
-                      {v.id ? (
-                        <span className="inline-flex items-center px-2 py-1 rounded-[7px] bg-[#FBF8F4] border border-[#E7E0D7] text-[#3D5357] font-semibold num">
-                          {v.openingStock} {unitPlural}
-                        </span>
-                      ) : (
-                        <input
-                          type="number"
-                          min={0}
-                          value={v.openingStock}
-                          onChange={(e) => updateVariantField(idx, 'openingStock', e.target.value)}
-                          className="field w-[72px] h-[32px] px-2 rounded-[7px] border border-[#D6CDC1] text-end num font-semibold"
-                        />
-                      )}
-                    </td>
-                    <td className="p-2 text-end">
-                      <input
-                        type="number"
-                        min={0}
-                        value={v.costPrice}
-                        onChange={(e) => updateVariantField(idx, 'costPrice', e.target.value)}
-                        className="field w-[82px] h-[32px] px-2 rounded-[7px] border border-[#D6CDC1] text-end num"
-                      />
-                    </td>
-                    <td className="p-2 text-end">
-                      <input
-                        type="number"
-                        min={0}
-                        value={v.sellingPrice}
-                        onChange={(e) => updateVariantField(idx, 'sellingPrice', e.target.value)}
-                        className="field w-[82px] h-[32px] px-2 rounded-[7px] border border-[#D6CDC1] text-end num font-semibold"
-                      />
+                      {formatVariantDisplay(v.colourName, v.sizeName, v.sizingSystem)}
                     </td>
                     <td className="p-2">
                       <input
                         value={v.sku}
-                        onChange={(e) =>
-                          updateVariantField(idx, 'sku', e.target.value.toUpperCase())
-                        }
+                        onChange={(e) => updateVariantField(idx, 'sku', e.target.value.toUpperCase())}
                         className="field w-[135px] h-[32px] px-2 rounded-[7px] border border-[#D6CDC1] mono"
                       />
                     </td>
                     <td className="p-2">
                       <input
                         value={v.barcode}
-                        onChange={(e) =>
-                          updateVariantField(idx, 'barcode', e.target.value.toUpperCase())
-                        }
-                        className="field w-[150px] h-[32px] px-2 rounded-[7px] border border-[#D6CDC1] mono"
+                        onChange={(e) => updateVariantField(idx, 'barcode', e.target.value.toUpperCase())}
+                        className="field w-[155px] h-[32px] px-2 rounded-[7px] border border-[#D6CDC1] mono"
                       />
                     </td>
+                    <td className="p-2 text-end">
+                      <input
+                        type="number"
+                        value={v.costPrice}
+                        onChange={(e) => updateVariantField(idx, 'costPrice', e.target.value)}
+                        className="field w-[78px] h-[32px] px-2 rounded-[7px] border border-[#D6CDC1] text-end num"
+                      />
+                    </td>
+                    <td className="p-2 text-end">
+                      <input
+                        type="number"
+                        value={v.sellingPrice}
+                        onChange={(e) => updateVariantField(idx, 'sellingPrice', e.target.value)}
+                        className="field w-[78px] h-[32px] px-2 rounded-[7px] border border-[#D6CDC1] text-end num font-semibold"
+                      />
+                    </td>
+                    {!itemId && (
+                      <td className="p-2 text-end">
+                        <input
+                          type="number"
+                          min={0}
+                          value={v.openingStock}
+                          onChange={(e) => updateVariantField(idx, 'openingStock', e.target.value)}
+                          className="field w-[68px] h-[32px] px-2 rounded-[7px] border border-[#D6CDC1] text-end num"
+                        />
+                      </td>
+                    )}
                     <td className="p-2 text-center">
                       <button
                         type="button"
@@ -1369,60 +1325,54 @@ export function ItemEditorForm({ itemId }: { itemId?: string }) {
               </tbody>
             </table>
           </div>
-        )}
 
-        {previewVariant && (
-          <div className="pt-2 space-y-2 border-t border-[#F1EBE3]">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="text-[12px] font-semibold uppercase tracking-wider text-[#52666A]">
-                Barcode label preview
+          {previewVariant && (
+            <div className="pt-2 space-y-2">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="text-[12px] font-semibold uppercase tracking-wider text-[#52666A]">
+                  Barcode label preview
+                </div>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={Math.min(previewIdx, Math.max(0, variants.length - 1))}
+                    onChange={(e) => setPreviewIdx(Number(e.target.value))}
+                    className="h-[32px] px-2 rounded-[8px] border border-[#D6CDC1] text-[12px] bg-white"
+                  >
+                    {variants.map((v, i) => (
+                      <option key={i} value={i}>
+                        {formatVariantDisplay(v.colourName, v.sizeName, v.sizingSystem)}
+                      </option>
+                    ))}
+                  </select>
+                  <Button size="sm" variant="secondary" type="button" onClick={() => window.print()}>
+                    <Printer className="w-3.5 h-3.5" /> Print
+                  </Button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <select
-                  value={Math.min(previewIdx, Math.max(0, variants.length - 1))}
-                  onChange={(e) => setPreviewIdx(Number(e.target.value))}
-                  className="h-[32px] px-2 rounded-[8px] border border-[#D6CDC1] text-[12px] bg-white"
-                >
-                  {variants.map((v, i) => (
-                    <option key={i} value={i}>
-                      {formatVariantDisplay(v.colourName, v.sizeName, v.sizingSystem)}
-                    </option>
-                  ))}
-                </select>
-                <Button size="sm" variant="secondary" type="button" onClick={() => window.print()}>
-                  <Printer className="w-3.5 h-3.5" /> Print
-                </Button>
+              <div className="zyro-print-area">
+                <BarcodePreview
+                  code={previewVariant.barcode || previewVariant.sku}
+                  label={`${name || 'Product'} · ${formatVariantDisplay(
+                    previewVariant.colourName,
+                    previewVariant.sizeName,
+                    previewVariant.sizingSystem,
+                  )}`}
+                  priceText={formatRs(Number(previewVariant.sellingPrice) || numPrice)}
+                />
               </div>
             </div>
-            <div className="zyro-print-area">
-              <BarcodePreview
-                code={previewVariant.barcode || previewVariant.sku}
-                label={`${name || 'Product'} · ${formatVariantDisplay(
-                  previewVariant.colourName,
-                  previewVariant.sizeName,
-                  previewVariant.sizingSystem,
-                )}`}
-                priceText={formatRs(Number(previewVariant.sellingPrice) || numPrice)}
-              />
-            </div>
-          </div>
-        )}
+          )}
 
-        <div className="flex items-center justify-between pt-3 border-t border-[#F1EBE3]">
-          <Link href="/inventory">
-            <Button variant="secondary" type="button">
-              Cancel
+          <div className="flex justify-between pt-2">
+            <Button variant="secondary" onClick={() => setStep(2)}>
+              Back
             </Button>
-          </Link>
-          <Button variant="primary" size="lg" disabled={saving} onClick={() => void handleSave()}>
-            {saving
-              ? 'Saving...'
-              : itemId
-                ? 'Save product changes'
-                : `Save product (${variants.length} variant${variants.length === 1 ? '' : 's'})`}
-          </Button>
-        </div>
-      </Card>
+            <Button variant="primary" size="lg" disabled={saving} onClick={() => void handleSave()}>
+              {saving ? 'Saving to Supabase...' : itemId ? 'Save changes' : 'Save to stock'}
+            </Button>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

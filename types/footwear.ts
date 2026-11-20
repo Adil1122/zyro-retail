@@ -16,6 +16,16 @@ export type FootwearType = (typeof FOOTWEAR_TYPES)[number];
 export const FOOTWEAR_GENDERS = ['Men', 'Women', 'Unisex', 'Boys', 'Girls', 'Kids'] as const;
 export type FootwearGender = (typeof FOOTWEAR_GENDERS)[number];
 
+export const FOOTWEAR_CHILD_GROUPS = ['Men', 'Women', 'Kids'] as const;
+export type FootwearChildGroup = (typeof FOOTWEAR_CHILD_GROUPS)[number];
+
+export const PARENT_CATEGORY_OPTIONS = [
+  { key: 'footwear' as const, label: 'Footwear' },
+  { key: 'bags' as const, label: 'Bags / Handbags' },
+] as const;
+export type ParentCategoryKey = (typeof PARENT_CATEGORY_OPTIONS)[number]['key'];
+
+export const FOOTWEAR_SIZING_SYSTEMS = ['EU', 'UK', 'US'] as const;
 export const SIZING_SYSTEMS = ['EU', 'UK', 'US', 'STANDARD'] as const;
 export type SizingSystem = (typeof SIZING_SYSTEMS)[number];
 
@@ -44,6 +54,9 @@ export interface FootwearCategoryRecord {
   name: string;
   parentId: string | null;
   parentName?: string | null;
+  categoryScope?: 'footwear' | 'bags';
+  childGroup?: string | null;
+  footwearType?: string | null;
   categoryType: 'sc' | 'simple';
   sizeSetId: string | null;
   artId: string;

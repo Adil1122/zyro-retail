@@ -110,6 +110,9 @@ export const footwearInventoryService = {
   createCategory(payload: {
     name: string;
     parentId?: string | null;
+    parentCategoryType?: 'footwear' | 'bags' | null;
+    childGroup?: string | null;
+    footwearType?: string | null;
     sizeSetId?: string | null;
     defaultSizingSystem?: SizingSystem;
     sizeOptions?: string[];
@@ -126,6 +129,9 @@ export const footwearInventoryService = {
     payload: {
       name?: string;
       parentId?: string | null;
+      parentCategoryType?: 'footwear' | 'bags' | null;
+      childGroup?: string | null;
+      footwearType?: string | null;
       sizeSetId?: string | null;
       defaultSizingSystem?: SizingSystem;
       sizeOptions?: string[];

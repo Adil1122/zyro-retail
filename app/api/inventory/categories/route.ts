@@ -7,7 +7,11 @@ import {
   normalizeSizingSystem,
 } from '@/lib/inventory-server';
 import type { Json } from '@/types/database';
-import { FOOTWEAR_TYPES, type SizingSystem } from '@/types/footwear';
+import {
+  FOOTWEAR_TYPES,
+  type ParentCategoryKey,
+  type SizingSystem,
+} from '@/types/footwear';
 
 function cleanSizeOptions(input?: string[] | null): string[] {
   if (!Array.isArray(input)) return [];
@@ -18,6 +22,10 @@ function cleanSizeOptions(input?: string[] | null): string[] {
         .filter(Boolean),
     ),
   );
+}
+
+function getParentPresetName(key: ParentCategoryKey): string {
+  return key === 'bags' ? 'Bags / Handbags' : 'Footwear';
 }
 
 export async function GET(req: NextRequest) {
@@ -74,9 +82,13 @@ export async function GET(req: NextRequest) {
   const mapped = rows.map((c) => {
     const schema = (c.attribute_schema ?? {}) as Record<string, unknown>;
     const parentName = c.parent_id ? nameById.get(c.parent_id) ?? null : null;
+    const inferredBag =
+      schema.category_scope === 'bags' ||
+      isBagCategoryName(c.name) ||
+      isBagCategoryName(parentName);
+    const categoryScope: 'footwear' | 'bags' = inferredBag ? 'bags' : 'footwear';
     const rawSystem =
-      schema.default_sizing_system ??
-      (isBagCategoryName(c.name) || isBagCategoryName(parentName) ? 'STANDARD' : 'EU');
+      schema.default_sizing_system ?? (categoryScope === 'bags' ? 'STANDARD' : 'EU');
     const directCount = countByCat.get(c.id) ?? 0;
     const childProducts = childProductsByParent.get(c.id) ?? 0;
 
@@ -85,10 +97,13 @@ export async function GET(req: NextRequest) {
       businessId: c.business_id,
       parentId: c.parent_id,
       parentName,
+      categoryScope,
+      childGroup: typeof schema.child_group === 'string' ? schema.child_group : null,
+      footwearType: typeof schema.footwear_type === 'string' ? schema.footwear_type : null,
       name: c.name,
       categoryType: c.category_type === 'simple' ? 'simple' : 'sc',
       sizeSetId: c.size_set_id,
-      artId: c.art_id || inferFootwearArt(c.name),
+      artId: c.art_id || inferFootwearArt(parentName || c.name),
       counterVisible: c.counter_visible,
       sortOrder: c.sort_order,
       isActive: c.is_active,
@@ -116,6 +131,9 @@ export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as {
     name?: string;
     parentId?: string | null;
+    parentCategoryType?: ParentCategoryKey | null;
+    childGroup?: string | null;
+    footwearType?: string | null;
     sizeSetId?: string | null;
     defaultSizingSystem?: SizingSystem;
     sizeOptions?: string[];
@@ -124,15 +142,74 @@ export async function POST(req: NextRequest) {
     sortOrder?: number;
   } | null;
 
-  const name = body?.name?.trim();
+  const parentCategoryType: ParentCategoryKey | null =
+    body?.parentCategoryType === 'bags'
+      ? 'bags'
+      : body?.parentCategoryType === 'footwear'
+        ? 'footwear'
+        : null;
+
+  const childGroupRaw = body?.childGroup?.trim() || null;
+  const footwearTypeRaw = body?.footwearType?.trim() || null;
+
+  const fallbackName =
+    parentCategoryType === 'footwear' && (childGroupRaw || footwearTypeRaw)
+      ? [childGroupRaw, footwearTypeRaw].filter(Boolean).join(' · ')
+      : '';
+  const name = (body?.name?.trim() || fallbackName).trim();
+
   if (!name) {
     return NextResponse.json({ error: 'Category name is required.' }, { status: 400 });
   }
 
-  const parentId = body?.parentId?.trim() || null;
+  let parentId = body?.parentId?.trim() || null;
   let parentName: string | null = null;
 
-  if (parentId) {
+  // Auto-resolve or create the parent category (Footwear or Bags / Handbags) when selected by preset key
+  if (!parentId && parentCategoryType) {
+    const targetParentName = getParentPresetName(parentCategoryType);
+    const { data: existingParent } = await supabase
+      .from('categories')
+      .select('id, name, parent_id')
+      .eq('business_id', businessId)
+      .ilike('name', targetParentName)
+      .is('parent_id', null)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (existingParent) {
+      parentId = existingParent.id;
+      parentName = existingParent.name;
+    } else {
+      const { data: createdParent, error: parentErr } = await supabase
+        .from('categories')
+        .insert({
+          business_id: businessId,
+          parent_id: null,
+          name: targetParentName,
+          category_type: 'sc',
+          art_id: parentCategoryType === 'bags' ? 'bag' : 'sneaker',
+          counter_visible: true,
+          sort_order: parentCategoryType === 'footwear' ? 0 : 1,
+          attribute_schema: {
+            category_scope: parentCategoryType,
+            default_sizing_system: parentCategoryType === 'bags' ? 'STANDARD' : 'EU',
+            size_options: [],
+          } as unknown as Json,
+        })
+        .select('id, name')
+        .single();
+
+      if (parentErr || !createdParent) {
+        return NextResponse.json(
+          { error: parentErr?.message || `Failed to create parent category "${targetParentName}".` },
+          { status: 400 },
+        );
+      }
+      parentId = createdParent.id;
+      parentName = createdParent.name;
+    }
+  } else if (parentId) {
     const { data: parentRow } = await supabase
       .from('categories')
       .select('id, name, parent_id')
@@ -153,15 +230,24 @@ export async function POST(req: NextRequest) {
     parentName = parentRow.name;
   }
 
-  const defaultSizingSystem: SizingSystem = body?.defaultSizingSystem
-    ? normalizeSizingSystem(body.defaultSizingSystem)
-    : isBagCategoryName(name) || isBagCategoryName(parentName)
-      ? 'STANDARD'
-      : 'EU';
+  const categoryScope: 'footwear' | 'bags' =
+    parentCategoryType === 'bags' ||
+    isBagCategoryName(parentName) ||
+    isBagCategoryName(name)
+      ? 'bags'
+      : 'footwear';
 
+  let defaultSizingSystem: SizingSystem;
+  if (categoryScope === 'bags') {
+    defaultSizingSystem = 'STANDARD';
+  } else {
+    const requested = normalizeSizingSystem(body?.defaultSizingSystem ?? 'EU');
+    defaultSizingSystem = requested === 'STANDARD' ? 'EU' : requested;
+  }
+
+  const childGroup = categoryScope === 'footwear' ? childGroupRaw : null;
+  const footwearType = categoryScope === 'footwear' ? footwearTypeRaw : null;
   const sizeOptions = cleanSizeOptions(body?.sizeOptions);
-  const categoryScope =
-    isBagCategoryName(name) || isBagCategoryName(parentName) ? 'bags' : 'footwear';
 
   const { data: maxOrderRow } = await supabase
     .from('categories')
@@ -182,11 +268,17 @@ export async function POST(req: NextRequest) {
       name,
       category_type: 'sc',
       size_set_id: body?.sizeSetId || null,
-      art_id: body?.artId || inferFootwearArt(parentName || name),
+      art_id:
+        body?.artId ||
+        (categoryScope === 'bags'
+          ? 'bag'
+          : inferFootwearArt(footwearType || name)),
       counter_visible: body?.counterVisible ?? true,
       sort_order: sortOrder,
       attribute_schema: {
         category_scope: categoryScope,
+        child_group: childGroup,
+        footwear_type: footwearType,
         default_sizing_system: defaultSizingSystem,
         size_options: sizeOptions,
       } as unknown as Json,
@@ -209,6 +301,9 @@ export async function POST(req: NextRequest) {
         businessId: created.business_id,
         parentId: created.parent_id,
         parentName,
+        categoryScope,
+        childGroup,
+        footwearType,
         name: created.name,
         categoryType: 'sc',
         sizeSetId: created.size_set_id,
@@ -226,4 +321,3 @@ export async function POST(req: NextRequest) {
     { status: 201 },
   );
 }
-

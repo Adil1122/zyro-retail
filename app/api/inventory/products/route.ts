@@ -404,15 +404,19 @@ export async function POST(req: NextRequest) {
     if (existingCat?.id) {
       categoryId = existingCat.id;
     } else {
+      const fallbackIsBag = sizingSystem === 'STANDARD' || isBagCategoryName(fallbackName);
       const { data: createdCat } = await supabase
         .from('categories')
         .insert({
           business_id: businessId,
           name: fallbackName,
           category_type: 'sc',
-          art_id: inferFootwearArt(fallbackName),
+          art_id: fallbackIsBag ? 'bag' : inferFootwearArt(fallbackName),
           counter_visible: true,
-          attribute_schema: { category_scope: 'footwear', default_sizing_system: sizingSystem },
+          attribute_schema: {
+            category_scope: fallbackIsBag ? 'bags' : 'footwear',
+            default_sizing_system: fallbackIsBag ? 'STANDARD' : sizingSystem,
+          },
         })
         .select('id')
         .maybeSingle();

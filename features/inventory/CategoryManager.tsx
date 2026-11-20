@@ -25,29 +25,14 @@ import { footwearInventoryService } from '@/features/inventory/services/footwear
 import { useZyro } from '@/hooks/useZyro';
 import {
   BAG_STANDARD_SIZES,
+  FOOTWEAR_CHILD_GROUPS,
+  FOOTWEAR_SIZING_SYSTEMS,
+  FOOTWEAR_TYPES,
+  PARENT_CATEGORY_OPTIONS,
   type FootwearCategoryRecord,
+  type ParentCategoryKey,
   type SizingSystem,
 } from '@/types/footwear';
-
-const SIZING_MODE_OPTIONS: Array<{ value: SizingSystem; label: string }> = [
-  { value: 'EU', label: 'EU Sizing (Footwear)' },
-  { value: 'UK', label: 'UK Sizing (Footwear)' },
-  { value: 'US', label: 'US Sizing (Footwear)' },
-  { value: 'STANDARD', label: 'Standard / Bags (One Size, S/M/L, Custom)' },
-];
-
-function isBagLike(name: string): boolean {
-  const lower = name.toLowerCase();
-  return (
-    lower.includes('bag') ||
-    lower.includes('handbag') ||
-    lower.includes('purse') ||
-    lower.includes('clutch') ||
-    lower.includes('tote') ||
-    lower.includes('backpack') ||
-    lower.includes('wallet')
-  );
-}
 
 function parseSizeInput(raw: string): string[] {
   return Array.from(
@@ -61,7 +46,22 @@ function parseSizeInput(raw: string): string[] {
 }
 
 function sizingBadgeLabel(sys: SizingSystem): string {
-  return sys === 'STANDARD' ? 'Standard / Bags' : `${sys} sizing`;
+  return sys === 'STANDARD' ? 'Standard (S / M / L)' : `${sys} sizing`;
+}
+
+function detectParentKey(cat: FootwearCategoryRecord | null | undefined): ParentCategoryKey {
+  if (!cat) return 'footwear';
+  if (cat.categoryScope === 'bags' || cat.defaultSizingSystem === 'STANDARD') return 'bags';
+  const combined = `${cat.parentName || ''} ${cat.name}`.toLowerCase();
+  if (combined.includes('bag') || combined.includes('handbag') || combined.includes('purse')) {
+    return 'bags';
+  }
+  return 'footwear';
+}
+
+function formatSuggestedFootwearCategoryName(childGroup: string, footwearType: string): string {
+  const prefix = childGroup === 'Kids' ? "Kids'" : `${childGroup}'s`;
+  return `${prefix} ${footwearType}`;
 }
 
 export function CategoryManager() {
@@ -72,8 +72,11 @@ export function CategoryManager() {
   // Create / Edit modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCat, setEditingCat] = useState<FootwearCategoryRecord | null>(null);
+  const [parentKey, setParentKey] = useState<ParentCategoryKey>('footwear');
+  const [childGroup, setChildGroup] = useState<string>(FOOTWEAR_CHILD_GROUPS[0]);
+  const [footwearType, setFootwearType] = useState<string>(FOOTWEAR_TYPES[0]);
   const [name, setName] = useState('');
-  const [parentId, setParentId] = useState<string>('');
+  const [nameTouched, setNameTouched] = useState(false);
   const [defaultSizingSystem, setDefaultSizingSystem] = useState<SizingSystem>('EU');
   const [sizeOptions, setSizeOptions] = useState<string[]>([]);
   const [sizeDraft, setSizeDraft] = useState('');
@@ -115,39 +118,93 @@ export function CategoryManager() {
     return { topLevelCategories: tops, childrenByParentId: childMap };
   }, [categories]);
 
-  const selectableParents = useMemo(() => {
-    return topLevelCategories.filter((c) => {
-      if (!editingCat) return true;
-      if (c.id === editingCat.id) return false;
-      return true;
-    });
-  }, [topLevelCategories, editingCat]);
-
-  const editingHasChildren = useMemo(() => {
+  const editingIsParentContainer = useMemo(() => {
     if (!editingCat) return false;
-    return (childrenByParentId.get(editingCat.id)?.length ?? 0) > 0;
+    const hasChildren = (childrenByParentId.get(editingCat.id)?.length ?? 0) > 0;
+    const isTopPreset =
+      !editingCat.parentId &&
+      (editingCat.name.toLowerCase() === 'footwear' ||
+        editingCat.name.toLowerCase() === 'bags / handbags');
+    return hasChildren || isTopPreset;
   }, [editingCat, childrenByParentId]);
 
-  const openAddModal = (presetParentId = '') => {
+  const openAddModal = (presetParent: ParentCategoryKey = 'footwear') => {
     setEditingCat(null);
-    setName('');
-    setParentId(presetParentId);
-    const parentCat = categories.find((c) => c.id === presetParentId);
-    const initialSystem: SizingSystem = parentCat?.defaultSizingSystem ?? 'EU';
-    setDefaultSizingSystem(initialSystem);
-    setSizeOptions(parentCat?.sizeOptions ? [...parentCat.sizeOptions] : []);
+    setParentKey(presetParent);
+    const defaultChild = FOOTWEAR_CHILD_GROUPS[0];
+    const defaultType = FOOTWEAR_TYPES[0];
+    setChildGroup(defaultChild);
+    setFootwearType(defaultType);
+    setNameTouched(false);
+
+    if (presetParent === 'bags') {
+      setName('');
+      setDefaultSizingSystem('STANDARD');
+      setSizeOptions([...BAG_STANDARD_SIZES]);
+    } else {
+      setName(formatSuggestedFootwearCategoryName(defaultChild, defaultType));
+      setDefaultSizingSystem('EU');
+      setSizeOptions([]);
+    }
     setSizeDraft('');
     setModalOpen(true);
   };
 
   const openEditModal = (cat: FootwearCategoryRecord) => {
+    const detected = detectParentKey(cat);
     setEditingCat(cat);
+    setParentKey(detected);
+    setChildGroup(cat.childGroup || FOOTWEAR_CHILD_GROUPS[0]);
+    setFootwearType(cat.footwearType || FOOTWEAR_TYPES[0]);
     setName(cat.name);
-    setParentId(cat.parentId || '');
-    setDefaultSizingSystem(cat.defaultSizingSystem || 'EU');
+    setNameTouched(true);
+    setDefaultSizingSystem(
+      detected === 'bags'
+        ? 'STANDARD'
+        : cat.defaultSizingSystem === 'STANDARD'
+          ? 'EU'
+          : cat.defaultSizingSystem || 'EU',
+    );
     setSizeOptions(cat.sizeOptions ? [...cat.sizeOptions] : []);
     setSizeDraft('');
     setModalOpen(true);
+  };
+
+  const handleParentKeyChange = (nextKey: ParentCategoryKey) => {
+    setParentKey(nextKey);
+    if (nextKey === 'bags') {
+      setDefaultSizingSystem('STANDARD');
+      if (sizeOptions.length === 0) {
+        setSizeOptions([...BAG_STANDARD_SIZES]);
+      }
+      if (!nameTouched) {
+        setName('');
+      }
+    } else {
+      setDefaultSizingSystem((prev) => (prev === 'STANDARD' ? 'EU' : prev));
+      if (!nameTouched) {
+        setName(formatSuggestedFootwearCategoryName(childGroup, footwearType));
+      }
+      setSizeOptions((prev) =>
+        prev.filter(
+          (sz) => !BAG_STANDARD_SIZES.some((b) => b.toLowerCase() === sz.toLowerCase()),
+        ),
+      );
+    }
+  };
+
+  const handleChildGroupChange = (nextGroup: string) => {
+    setChildGroup(nextGroup);
+    if (!nameTouched && parentKey === 'footwear') {
+      setName(formatSuggestedFootwearCategoryName(nextGroup, footwearType));
+    }
+  };
+
+  const handleFootwearTypeChange = (nextType: string) => {
+    setFootwearType(nextType);
+    if (!nameTouched && parentKey === 'footwear') {
+      setName(formatSuggestedFootwearCategoryName(childGroup, nextType));
+    }
   };
 
   const addSizesFromDraft = () => {
@@ -161,16 +218,6 @@ export function CategoryManager() {
     setSizeOptions((prev) => prev.filter((item) => item !== sz));
   };
 
-  const handleNameChange = (val: string) => {
-    setName(val);
-    if (!editingCat && isBagLike(val) && defaultSizingSystem !== 'STANDARD') {
-      setDefaultSizingSystem('STANDARD');
-      if (sizeOptions.length === 0) {
-        setSizeOptions([...BAG_STANDARD_SIZES]);
-      }
-    }
-  };
-
   const handleSave = async () => {
     const cleanName = name.trim();
     if (!cleanName) {
@@ -178,26 +225,36 @@ export function CategoryManager() {
       return;
     }
 
-    // Include any uncommitted comma-separated sizes in the draft input
     const finalSizes = Array.from(
       new Set([...sizeOptions, ...parseSizeInput(sizeDraft)]),
     );
+
+    const finalSizingSystem: SizingSystem =
+      parentKey === 'bags'
+        ? 'STANDARD'
+        : defaultSizingSystem === 'STANDARD'
+          ? 'EU'
+          : defaultSizingSystem;
 
     setSaving(true);
     try {
       if (editingCat) {
         await footwearInventoryService.updateCategory(editingCat.id, {
           name: cleanName,
-          parentId: parentId || null,
-          defaultSizingSystem,
+          ...(editingIsParentContainer ? {} : { parentCategoryType: parentKey }),
+          childGroup: parentKey === 'footwear' && !editingIsParentContainer ? childGroup : null,
+          footwearType: parentKey === 'footwear' && !editingIsParentContainer ? footwearType : null,
+          defaultSizingSystem: finalSizingSystem,
           sizeOptions: finalSizes,
         });
         notify(`Updated category “${cleanName}”`, 'ok');
       } else {
         await footwearInventoryService.createCategory({
           name: cleanName,
-          parentId: parentId || null,
-          defaultSizingSystem,
+          parentCategoryType: parentKey,
+          childGroup: parentKey === 'footwear' ? childGroup : null,
+          footwearType: parentKey === 'footwear' ? footwearType : null,
+          defaultSizingSystem: finalSizingSystem,
           sizeOptions: finalSizes,
           counterVisible: true,
         });
@@ -238,12 +295,20 @@ export function CategoryManager() {
     }
   };
 
+  const sizingModeOptions =
+    parentKey === 'bags'
+      ? [{ value: 'STANDARD', label: 'Standard (One Size / S / M / L)' }]
+      : FOOTWEAR_SIZING_SYSTEMS.map((sys) => ({
+          value: sys,
+          label: `${sys} Sizing`,
+        }));
+
   return (
     <div className="space-y-5">
       <PageHeader
         eyebrow="Catalog hierarchy"
         title="Categories"
-        subtitle="Organize parent and child categories (e.g. Footwear → Men's, Women's, Kids' and Bags / Handbags) and configure size options per category."
+        subtitle="Manage Footwear (Men, Women, Kids & styles) and Bags / Handbags categories with configurable sizing."
         actions={
           <div className="flex items-center gap-2">
             <Link href="/inventory">
@@ -251,7 +316,7 @@ export function CategoryManager() {
                 <ArrowLeft className="w-4 h-4" /> Back to stock
               </Button>
             </Link>
-            <Button variant="dark" size="lg" onClick={() => openAddModal('')}>
+            <Button variant="dark" size="lg" onClick={() => openAddModal('footwear')}>
               <Plus className="w-4 h-4" /> Add category
             </Button>
           </div>
@@ -265,9 +330,9 @@ export function CategoryManager() {
       ) : topLevelCategories.length === 0 ? (
         <EmptyState
           title="No categories yet"
-          body="Start by creating top-level categories like Footwear (with Men's, Women's, Kids' underneath) or Bags / Handbags."
+          body="Add your first Footwear or Bags / Handbags category to organize products and configurable sizes."
           action={
-            <Button variant="primary" onClick={() => openAddModal('')}>
+            <Button variant="primary" onClick={() => openAddModal('footwear')}>
               <Plus className="w-4 h-4" /> Add category
             </Button>
           }
@@ -277,6 +342,7 @@ export function CategoryManager() {
           {topLevelCategories.map((parent) => {
             const children = childrenByParentId.get(parent.id) ?? [];
             const totalProducts = parent.totalProductCount ?? parent.productCount ?? 0;
+            const pKey = detectParentKey(parent);
 
             return (
               <Card key={parent.id} className="space-y-3">
@@ -304,7 +370,7 @@ export function CategoryManager() {
                       {parent.sizeOptions.length > 0
                         ? ` · Sizes: ${parent.sizeOptions.join(', ')}`
                         : children.length === 0
-                          ? ' · Sizes configurable per product or category'
+                          ? ' · Add child categories or configure sizes'
                           : ' · Configure sizes on each child category'}
                     </div>
                   </div>
@@ -313,7 +379,7 @@ export function CategoryManager() {
                     <Button
                       size="sm"
                       variant="secondary"
-                      onClick={() => openAddModal(parent.id)}
+                      onClick={() => openAddModal(pKey)}
                     >
                       <Plus className="w-3.5 h-3.5" /> Add child
                     </Button>
@@ -363,6 +429,12 @@ export function CategoryManager() {
                               <span className="font-semibold text-[14px] text-[#0B2A2F]">
                                 {child.name}
                               </span>
+                              {child.childGroup && (
+                                <Badge tone="neutral">{child.childGroup}</Badge>
+                              )}
+                              {child.footwearType && (
+                                <Badge tone="neutral">{child.footwearType}</Badge>
+                              )}
                               <Badge tone="neutral">
                                 {child.productCount ?? 0} product
                                 {(child.productCount ?? 0) === 1 ? '' : 's'}
@@ -424,8 +496,8 @@ export function CategoryManager() {
         title={editingCat ? `Edit category · ${editingCat.name}` : 'Add category'}
         subtitle={
           editingCat
-            ? 'Update category name, parent relationship, sizing mode, or configurable size options.'
-            : 'Leave Parent category empty for a top-level category, or choose a parent to create a child category.'
+            ? 'Update category details, sizing mode, or configurable size options.'
+            : 'Choose a parent category (Footwear or Bags / Handbags) and configure its options.'
         }
         footer={
           <>
@@ -439,54 +511,62 @@ export function CategoryManager() {
         }
       >
         <div className="space-y-4">
+          {/* 1. Parent Category Dropdown: Footwear or Bags / Handbags */}
+          <Select
+            label="Parent category"
+            value={parentKey}
+            disabled={editingIsParentContainer}
+            onChange={(e) => handleParentKeyChange(e.target.value as ParentCategoryKey)}
+            options={PARENT_CATEGORY_OPTIONS.map((opt) => ({
+              value: opt.key,
+              label: opt.label,
+            }))}
+          />
+
+          {/* 2 & 3. Child Category (Men / Women / Kids) & Footwear Type (Sneakers etc.) — ONLY for Footwear */}
+          {parentKey === 'footwear' && !editingIsParentContainer && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Select
+                label="Child category"
+                value={childGroup}
+                onChange={(e) => handleChildGroupChange(e.target.value)}
+                options={FOOTWEAR_CHILD_GROUPS.map((g) => ({
+                  value: g,
+                  label: g,
+                }))}
+              />
+              <Select
+                label="Footwear category"
+                value={footwearType}
+                onChange={(e) => handleFootwearTypeChange(e.target.value)}
+                options={FOOTWEAR_TYPES.map((t) => ({
+                  value: t,
+                  label: t,
+                }))}
+              />
+            </div>
+          )}
+
           <Input
             label="Category name"
             placeholder={
-              parentId
-                ? "e.g. Men's, Women's, Kids'"
-                : 'e.g. Footwear, Bags / Handbags'
+              parentKey === 'bags'
+                ? 'e.g. Handbags, Tote Bags, Clutches, Backpacks'
+                : "e.g. Men's Sneakers, Women's Sandals, Kids' School Shoes"
             }
             value={name}
-            onChange={(e) => handleNameChange(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              setNameTouched(true);
+            }}
           />
 
+          {/* 4. Sizing Mode: EU/UK/US for Footwear, Standard S/M/L for Bags */}
           <Select
-            label="Parent category (optional)"
-            value={parentId}
-            disabled={editingHasChildren}
-            onChange={(e) => {
-              const nextPid = e.target.value;
-              setParentId(nextPid);
-              const parentObj = categories.find((c) => c.id === nextPid);
-              if (parentObj) {
-                setDefaultSizingSystem(parentObj.defaultSizingSystem);
-              }
-            }}
-            options={[
-              { value: '', label: 'None — Top-level parent category' },
-              ...selectableParents.map((p) => ({
-                value: p.id,
-                label: p.name,
-              })),
-            ]}
-          />
-          {editingHasChildren && (
-            <p className="text-[12px] text-[#52666A] -mt-2">
-              This category has child categories underneath it and must remain a top-level parent.
-            </p>
-          )}
-
-          <Select
-            label="Sizing mode"
-            value={defaultSizingSystem}
-            onChange={(e) => {
-              const nextSys = e.target.value as SizingSystem;
-              setDefaultSizingSystem(nextSys);
-              if (nextSys === 'STANDARD' && sizeOptions.length === 0) {
-                setSizeOptions([...BAG_STANDARD_SIZES]);
-              }
-            }}
-            options={SIZING_MODE_OPTIONS}
+            label="Sizing system"
+            value={parentKey === 'bags' ? 'STANDARD' : defaultSizingSystem}
+            onChange={(e) => setDefaultSizingSystem(e.target.value as SizingSystem)}
+            options={sizingModeOptions}
           />
 
           {/* Configurable Sizes for this Category */}
@@ -495,7 +575,7 @@ export function CategoryManager() {
               <label className="text-[13px] font-semibold text-[#0B2A2F]">
                 Available sizes for this category (optional)
               </label>
-              {defaultSizingSystem === 'STANDARD' && (
+              {parentKey === 'bags' && (
                 <button
                   type="button"
                   onClick={() =>
@@ -522,7 +602,7 @@ export function CategoryManager() {
                   }
                 }}
                 placeholder={
-                  defaultSizingSystem === 'STANDARD'
+                  parentKey === 'bags'
                     ? 'e.g. One Size, Small, Medium, Large'
                     : 'Comma-separated sizes, e.g. 40, 41, 42, 43, 44'
                 }
