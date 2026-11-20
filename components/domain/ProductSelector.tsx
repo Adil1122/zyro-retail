@@ -129,7 +129,7 @@ export function ProductSelector({
 
 export interface FootwearProductSelectorProps {
   products: FootwearProductRecord[];
-  categories: Array<{ id: string; name: string }>;
+  categories: Array<{ id: string; parentId?: string | null; name: string }>;
   brands?: string[];
   sizes?: string[];
   colours?: string[];
@@ -139,6 +139,7 @@ export interface FootwearProductSelectorProps {
 }
 
 function getFootwearStockBadge(product: FootwearProductRecord) {
+  const unit = product.unitOfMeasure === 'piece' ? 'pcs' : 'pairs';
   if (product.totalStock <= 0) {
     return { dot: '#B42318', fg: '#B42318', text: 'Out of stock' };
   }
@@ -146,10 +147,10 @@ function getFootwearStockBadge(product: FootwearProductRecord) {
     return {
       dot: '#B57B00',
       fg: '#6B4E00',
-      text: `${product.totalStock} pairs · ${product.outOfStockVariants > 0 ? `${product.outOfStockVariants} size out` : 'Low stock'}`,
+      text: `${product.totalStock} ${unit} · ${product.outOfStockVariants > 0 ? `${product.outOfStockVariants} variant out` : 'Low stock'}`,
     };
   }
-  return { dot: '#14532D', fg: '#14532D', text: `${product.totalStock} pairs in stock` };
+  return { dot: '#14532D', fg: '#14532D', text: `${product.totalStock} ${unit} in stock` };
 }
 
 export function FootwearProductSelector({
@@ -160,23 +161,61 @@ export function FootwearProductSelector({
   colours = [],
   loading = false,
   onSelect,
-  placeholder = 'Search footwear name, brand, model, SKU or barcode...',
+  placeholder = 'Search article, product name, brand, SKU or barcode...',
 }: FootwearProductSelectorProps) {
   const [query, setQuery] = useState('');
-  const [catId, setCatId] = useState('all');
+  const [parentCatId, setParentCatId] = useState('all');
+  const [childCatId, setChildCatId] = useState('all');
   const [brandFilter, setBrandFilter] = useState('all');
   const [sizeFilter, setSizeFilter] = useState('all');
   const [colourFilter, setColourFilter] = useState('all');
 
-  const categoryTabs = useMemo(
-    () => [{ id: 'all', label: 'All footwear' }, ...categories.map((c) => ({ id: c.id, label: c.name }))],
-    [categories]
+  const { parentTabs, childrenByParent } = useMemo(() => {
+    const parents = categories.filter((c) => !c.parentId);
+    const parentIds = new Set(parents.map((p) => p.id));
+    const map = new Map<string, Array<{ id: string; name: string }>>();
+    const orphans: Array<{ id: string; name: string }> = [];
+
+    for (const c of categories) {
+      if (c.parentId) {
+        if (parentIds.has(c.parentId)) {
+          const list = map.get(c.parentId) ?? [];
+          list.push({ id: c.id, name: c.name });
+          map.set(c.parentId, list);
+        } else {
+          orphans.push({ id: c.id, name: c.name });
+        }
+      }
+    }
+
+    return {
+      parentTabs: [
+        { id: 'all', label: 'All items' },
+        ...parents.map((c) => ({ id: c.id, label: c.name })),
+        ...orphans.map((c) => ({ id: c.id, label: c.name })),
+      ],
+      childrenByParent: map,
+    };
+  }, [categories]);
+
+  const activeChildren = useMemo(
+    () => (parentCatId !== 'all' ? childrenByParent.get(parentCatId) ?? [] : []),
+    [childrenByParent, parentCatId],
+  );
+
+  const selectedParentLabel = useMemo(
+    () => parentTabs.find((t) => t.id === parentCatId)?.label ?? '',
+    [parentTabs, parentCatId],
   );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return products.filter((p) => {
-      if (catId !== 'all' && p.categoryId !== catId) return false;
+      if (childCatId !== 'all') {
+        if (p.categoryId !== childCatId) return false;
+      } else if (parentCatId !== 'all') {
+        if (p.categoryId !== parentCatId && p.parentCategoryId !== parentCatId) return false;
+      }
       if (brandFilter !== 'all' && (p.brand || '') !== brandFilter) return false;
       if (sizeFilter !== 'all' && !p.sizes.includes(sizeFilter)) return false;
       if (colourFilter !== 'all' && !p.colours.includes(colourFilter)) return false;
@@ -194,11 +233,12 @@ export function FootwearProductSelector({
         p.sku.toLowerCase().includes(q) ||
         (p.brand && p.brand.toLowerCase().includes(q)) ||
         (p.model && p.model.toLowerCase().includes(q)) ||
+        (p.categoryPath && p.categoryPath.toLowerCase().includes(q)) ||
         p.footwearType.toLowerCase().includes(q) ||
         variantMatch
       );
     });
-  }, [products, catId, brandFilter, sizeFilter, colourFilter, query]);
+  }, [products, parentCatId, childCatId, brandFilter, sizeFilter, colourFilter, query]);
 
   const hasFacetFilters = brandFilter !== 'all' || sizeFilter !== 'all' || colourFilter !== 'all';
 
@@ -211,14 +251,18 @@ export function FootwearProductSelector({
         rightSlot={<ScanBarcode className="w-4 h-4 text-[#52666A] shrink-0" />}
       />
 
+      {/* Parent category tabs */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-        {categoryTabs.map((c) => {
-          const active = catId === c.id;
+        {parentTabs.map((c) => {
+          const active = parentCatId === c.id;
           return (
             <button
               key={c.id}
               type="button"
-              onClick={() => setCatId(c.id)}
+              onClick={() => {
+                setParentCatId(c.id);
+                setChildCatId('all');
+              }}
               className={`px-3 py-1.5 rounded-full text-[13px] font-semibold whitespace-nowrap border transition-colors ${
                 active
                   ? 'bg-[#08343A] text-white border-[#08343A]'
@@ -230,6 +274,40 @@ export function FootwearProductSelector({
           );
         })}
       </div>
+
+      {/* Child category tabs (shown when selected parent has children, e.g. Footwear -> Men's / Women's / Kids') */}
+      {activeChildren.length > 0 && (
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+          <button
+            type="button"
+            onClick={() => setChildCatId('all')}
+            className={`px-2.5 py-1 rounded-full text-[12px] font-semibold whitespace-nowrap border transition-colors ${
+              childCatId === 'all'
+                ? 'bg-[#FCEFE4] text-[#8A3D12] border-[#C9682E]'
+                : 'bg-white text-[#52666A] border-[#E7E0D7] hover:bg-[#F8F4EF]'
+            }`}
+          >
+            All {selectedParentLabel}
+          </button>
+          {activeChildren.map((child) => {
+            const active = childCatId === child.id;
+            return (
+              <button
+                key={child.id}
+                type="button"
+                onClick={() => setChildCatId(child.id)}
+                className={`px-2.5 py-1 rounded-full text-[12px] font-semibold whitespace-nowrap border transition-colors ${
+                  active
+                    ? 'bg-[#FCEFE4] text-[#8A3D12] border-[#C9682E]'
+                    : 'bg-white text-[#52666A] border-[#E7E0D7] hover:bg-[#F8F4EF]'
+                }`}
+              >
+                {child.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {(brands.length > 0 || sizes.length > 0 || colours.length > 0) && (
         <div className="flex flex-wrap items-center gap-2">
@@ -258,7 +336,7 @@ export function FootwearProductSelector({
               <option value="all">All sizes</option>
               {sizes.map((s) => (
                 <option key={s} value={s}>
-                  Size {s}
+                  {s}
                 </option>
               ))}
             </select>
@@ -328,7 +406,13 @@ export function FootwearProductSelector({
                     {product.name}
                   </div>
                   <div className="text-[11px] text-[#52666A] truncate">
-                    {[product.brand, product.footwearType, product.sizingSystem].filter(Boolean).join(' · ')}
+                    {[
+                      product.brand,
+                      product.categoryPath || product.categoryName,
+                      product.sizingSystem !== 'STANDARD' ? product.sizingSystem : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className="text-[13px] font-bold text-[#08343A] num">
@@ -363,10 +447,10 @@ export function FootwearProductSelector({
       {!loading && filtered.length === 0 && (
         <div className="py-8 text-center text-[14px] text-[#52666A]">
           {products.length === 0 ? (
-            <>No active footwear products in this branch yet. Add items in Stock first.</>
+            <>No active products in this branch yet. Add items in Stock first.</>
           ) : (
             <>
-              No footwear matches your filter. <Badge tone="neutral">Try SKU or barcode</Badge>
+              No products match your filter. <Badge tone="neutral">Try SKU or barcode</Badge>
             </>
           )}
         </div>

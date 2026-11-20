@@ -14,7 +14,12 @@ import { SearchInput } from '@/components/ui/SearchInput';
 import { Tabs } from '@/components/ui/Tabs';
 import { footwearInventoryService } from '@/features/inventory/services/footwear-inventory.service';
 import { useZyro } from '@/hooks/useZyro';
-import type { FootwearProductRecord, FootwearVariantRecord, StockCountRecord } from '@/types/footwear';
+import {
+  formatVariantDisplay,
+  type FootwearProductRecord,
+  type FootwearVariantRecord,
+  type StockCountRecord,
+} from '@/types/footwear';
 
 interface VariantCountRow {
   product: FootwearProductRecord;
@@ -81,6 +86,7 @@ export function StockCountSession() {
           q &&
           !p.name.toLowerCase().includes(q) &&
           !(p.brand ?? '').toLowerCase().includes(q) &&
+          !(p.categoryPath ?? '').toLowerCase().includes(q) &&
           !v.variantName.toLowerCase().includes(q) &&
           !v.sku.toLowerCase().includes(q) &&
           !(v.primaryBarcode ?? '').toLowerCase().includes(q)
@@ -165,8 +171,8 @@ export function StockCountSession() {
     <div className="space-y-5">
       <PageHeader
         eyebrow={`Physical verification · ${branchName || 'Active branch'}`}
-        title="Count footwear stock"
-        subtitle="Walk the shelves and enter actual pair counts per size and colour. Discrepancies reconcile on submit."
+        title="Count stock"
+        subtitle="Walk the shelves and enter actual counts per colour and size. Discrepancies reconcile on submit."
         actions={
           <div className="flex items-center gap-2">
             <Link href="/inventory">
@@ -281,9 +287,12 @@ export function StockCountSession() {
                     <div className="min-w-0">
                       <div className="font-semibold text-[14px] text-[#0B2A2F] truncate">
                         {product.name}{' '}
-                        <span className="font-normal text-[#52666A]">· {variant.variantName}</span>
+                        <span className="font-normal text-[#52666A]">
+                          · {formatVariantDisplay(variant.colourName, variant.sizeName, variant.sizingSystem)}
+                        </span>
                       </div>
                       <div className="text-[12px] text-[#52666A] mono">
+                        {product.categoryPath ? `${product.categoryPath} · ` : ''}
                         {variant.sku}
                         {variant.primaryBarcode ? ` · ${variant.primaryBarcode}` : ''} · Expected {expected}
                       </div>

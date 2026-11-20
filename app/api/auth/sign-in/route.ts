@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { isNavModuleEnabled } from '@/constants/navigation';
 import { normalizePhoneToE164 } from '@/lib/auth/phone';
 import {
   ACTIVE_BRANCH_COOKIE,
@@ -98,12 +99,18 @@ export async function POST(req: NextRequest) {
     }
 
     const session = await getServerAuthSessionPayload();
+    const redirectTo =
+      typeof session.recommendedRedirect === 'string' && session.recommendedRedirect.startsWith('/')
+        ? session.recommendedRedirect
+        : isNavModuleEnabled('home')
+          ? '/dashboard'
+          : '/inventory';
 
     const response = NextResponse.json(
       {
         ok: true,
         session,
-        redirectTo: session.recommendedRedirect,
+        redirectTo,
       },
       { status: 200 },
     );

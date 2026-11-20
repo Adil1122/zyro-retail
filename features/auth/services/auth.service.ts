@@ -22,7 +22,16 @@ export class AuthApiError extends Error {
 }
 
 async function parseJsonResponse<T>(res: Response): Promise<T> {
-  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  let parsed: unknown = null;
+  let parseFailed = false;
+  try {
+    parsed = await res.json();
+  } catch {
+    parseFailed = true;
+  }
+
+  const data = (parsed && typeof parsed === 'object' ? parsed : {}) as Record<string, unknown>;
+
   if (!res.ok) {
     throw new AuthApiError(
       (typeof data.error === 'string' && data.error) ||
@@ -33,6 +42,15 @@ async function parseJsonResponse<T>(res: Response): Promise<T> {
       data,
     );
   }
+
+  if (parseFailed || !parsed || typeof parsed !== 'object') {
+    throw new AuthApiError(
+      'Received an unexpected response from the server. Please refresh and try again.',
+      res.status,
+      'INVALID_JSON_RESPONSE',
+    );
+  }
+
   return data as T;
 }
 

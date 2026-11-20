@@ -36,12 +36,13 @@ import { useZyro } from '@/hooks/useZyro';
 import { formatRs } from '@/lib/format';
 import { calcDiscountAmount } from '@/lib/inventory';
 import type { BillDiscount } from '@/types';
-import type {
-  FootwearProductRecord,
-  FootwearVariantRecord,
-  PosCustomerRecord,
-  PosHeldBillRecord,
-  PosSaleRecord,
+import {
+  formatVariantDisplay,
+  type FootwearProductRecord,
+  type FootwearVariantRecord,
+  type PosCustomerRecord,
+  type PosHeldBillRecord,
+  type PosSaleRecord,
 } from '@/types/footwear';
 import {
   DiscountModal,
@@ -166,12 +167,17 @@ export function PosRegisterWorkspace() {
 
   const addVariantToCart = useCallback(
     (variant: FootwearVariantRecord, product: FootwearProductRecord) => {
+      const displayLabel = formatVariantDisplay(
+        variant.colourName,
+        variant.sizeName,
+        variant.sizingSystem,
+      );
       if (!variant.isActive || !product.isActive) {
         notify(`${product.name} is inactive and cannot be sold`, 'err');
         return;
       }
       if (variant.availableStock <= 0) {
-        notify(`${product.name} (${variant.colourName} · ${variant.sizingSystem} ${variant.sizeName}) is out of stock`, 'err');
+        notify(`${product.name} (${displayLabel}) is out of stock`, 'err');
         return;
       }
 
@@ -179,7 +185,7 @@ export function PosRegisterWorkspace() {
         const existing = prev.find((l) => l.variantId === variant.id);
         if (existing) {
           if (existing.qty + 1 > variant.availableStock) {
-            notify(`Only ${variant.availableStock} pairs in stock for ${variant.sku}`, 'warn');
+            notify(`Only ${variant.availableStock} in stock for ${variant.sku}`, 'warn');
             return prev;
           }
           return prev.map((l) =>
@@ -196,7 +202,7 @@ export function PosRegisterWorkspace() {
           brand: product.brand,
           artId: product.artId,
           imageUrl: product.primaryImageUrl,
-          variantText: `${variant.colourName} · ${variant.sizingSystem} ${variant.sizeName}`,
+          variantText: displayLabel,
           colourName: variant.colourName,
           sizeName: variant.sizeName,
           sizingSystem: variant.sizingSystem,
@@ -210,7 +216,7 @@ export function PosRegisterWorkspace() {
         };
         return [...prev, nextLine];
       });
-      notify(`Added ${product.name} (${variant.colourName} · ${variant.sizingSystem} ${variant.sizeName})`, 'ok');
+      notify(`Added ${product.name} (${displayLabel})`, 'ok');
     },
     [notify]
   );
@@ -312,7 +318,7 @@ export function PosRegisterWorkspace() {
         const nextQty = patch.qty !== undefined ? patch.qty : l.qty;
         if (nextQty <= 0) continue;
         if (nextQty > l.availableStock) {
-          notify(`Only ${l.availableStock} pairs available for ${l.sku}`, 'warn');
+          notify(`Only ${l.availableStock} available for ${l.sku}`, 'warn');
           next.push(l);
           continue;
         }
@@ -578,7 +584,7 @@ export function PosRegisterWorkspace() {
           <div className="py-12 text-center space-y-2 text-[#52666A]">
             <ShoppingBag className="w-8 h-8 mx-auto opacity-50" />
             <div className="font-semibold text-[14px] text-[#0B2A2F]">Empty bill</div>
-            <div className="text-[13px]">Tap footwear on the left or scan a box barcode to start</div>
+            <div className="text-[13px]">Tap an item on the left or scan a barcode to start</div>
           </div>
         ) : (
           cart.map((line) => (

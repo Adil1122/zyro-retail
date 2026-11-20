@@ -7,6 +7,8 @@ import {
   fetchHydratedFootwearProducts,
   generateBarcodeValue,
   inferFootwearArt,
+  isBagCategoryName,
+  normalizeSizingSystem,
 } from '@/lib/inventory-server';
 import type { Json, TableUpdate } from '@/types/database';
 import type { FootwearMetadata, SizingSystem } from '@/types/footwear';
@@ -113,11 +115,10 @@ export async function PATCH(
   }
 
   const prevMeta = (existing.metadata ?? {}) as FootwearMetadata;
-  const sizingSystem: SizingSystem =
-    body.sizingSystem === 'UK' || body.sizingSystem === 'US' || body.sizingSystem === 'EU'
-      ? body.sizingSystem
-      : prevMeta.sizing_system ?? 'EU';
-  const footwearType = body.footwearType?.trim() || prevMeta.footwear_type || 'Sneakers';
+  const sizingSystem: SizingSystem = body.sizingSystem
+    ? normalizeSizingSystem(body.sizingSystem)
+    : normalizeSizingSystem(prevMeta.sizing_system ?? 'EU');
+  const footwearType = body.footwearType?.trim() || prevMeta.footwear_type || 'Footwear';
   const existingSku = existing.sku ?? '';
   const nextSku = (body.sku?.trim() || existingSku).toUpperCase();
 
@@ -136,8 +137,33 @@ export async function PATCH(
     }
   }
 
+  let resolvedCatLabel = footwearType;
+  const targetCatId = body.categoryId !== undefined ? body.categoryId : existing.category_id;
+  if (targetCatId) {
+    const { data: catRow } = await supabase
+      .from('categories')
+      .select('name, parent_id')
+      .eq('id', targetCatId)
+      .eq('business_id', businessId)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (catRow?.name) {
+      resolvedCatLabel = catRow.name;
+      if (catRow.parent_id) {
+        const { data: parentRow } = await supabase
+          .from('categories')
+          .select('name')
+          .eq('id', catRow.parent_id)
+          .maybeSingle();
+        if (parentRow?.name) resolvedCatLabel = `${parentRow.name} ${catRow.name}`;
+      }
+    }
+  }
+
+  const isBagProduct = sizingSystem === 'STANDARD' || isBagCategoryName(resolvedCatLabel);
+
   const nextMeta: FootwearMetadata = {
-    category_scope: 'footwear',
+    category_scope: isBagProduct ? 'bags' : 'footwear',
     model: body.model !== undefined ? body.model?.trim() || null : prevMeta.model ?? null,
     footwear_type: footwearType,
     gender: body.gender !== undefined ? body.gender?.trim() || null : prevMeta.gender ?? null,
@@ -153,7 +179,8 @@ export async function PATCH(
   const productUpdate: TableUpdate<'products'> = {
     sku: nextSku || null,
     metadata: nextMeta as unknown as Json,
-    art_id: inferFootwearArt(footwearType),
+    art_id: inferFootwearArt(resolvedCatLabel || footwearType),
+    unit_of_measure: isBagProduct ? 'piece' : 'pair',
   };
 
   if (body.name !== undefined && body.name.trim()) productUpdate.name = body.name.trim();
@@ -217,10 +244,9 @@ export async function PATCH(
       const v = body.variants[idx];
       const colourName = v.colourName?.trim() || 'Standard';
       const sizeName = v.sizeName?.trim() || '';
-      const vSys: SizingSystem =
-        v.sizingSystem === 'UK' || v.sizingSystem === 'US' || v.sizingSystem === 'EU'
-          ? v.sizingSystem
-          : sizingSystem;
+      const vSys: SizingSystem = v.sizingSystem
+        ? normalizeSizingSystem(v.sizingSystem)
+        : sizingSystem;
       const vSku = (v.sku?.trim() || buildVariantSku(nextSku, colourName, sizeName)).toUpperCase();
       const vName = buildVariantName(colourName, sizeName, vSys);
       const vCost = Math.max(0, Number(v.costPrice ?? baseCost));

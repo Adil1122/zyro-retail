@@ -23,11 +23,12 @@ export async function GET(req: NextRequest) {
       }),
       supabase
         .from('categories')
-        .select('id, name, art_id, counter_visible, sort_order')
+        .select('id, parent_id, name, art_id, counter_visible, sort_order')
         .eq('business_id', businessId)
         .eq('is_active', true)
         .is('deleted_at', null)
-        .order('sort_order', { ascending: true }),
+        .order('sort_order', { ascending: true })
+        .order('name', { ascending: true }),
       supabase
         .from('payment_methods')
         .select('method_code, display_name, is_active, sort_order')
@@ -58,6 +59,7 @@ export async function GET(req: NextRequest) {
       canProcessReturns: membership.permissions.includes('pos.returns.process'),
       categories: (catsRes.data ?? []).map((c) => ({
         id: c.id,
+        parentId: c.parent_id,
         name: c.name,
         artId: c.art_id || inferFootwearArt(c.name),
         counterVisible: c.counter_visible,

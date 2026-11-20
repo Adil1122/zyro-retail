@@ -36,7 +36,7 @@ export default function SelectWorkspacePage() {
 
       const redirectTo = await auth.selectWorkspace(activeChoice.businessId, targetBranch);
       notify(`Opened ${activeChoice.businessName}`, 'ok');
-      router.push(redirectTo);
+      router.push(typeof redirectTo === 'string' && redirectTo.startsWith('/') ? redirectTo : '/inventory');
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Unable to switch workspace.');
     } finally {

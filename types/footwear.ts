@@ -16,14 +16,34 @@ export type FootwearType = (typeof FOOTWEAR_TYPES)[number];
 export const FOOTWEAR_GENDERS = ['Men', 'Women', 'Unisex', 'Boys', 'Girls', 'Kids'] as const;
 export type FootwearGender = (typeof FOOTWEAR_GENDERS)[number];
 
-export const SIZING_SYSTEMS = ['EU', 'UK', 'US'] as const;
+export const SIZING_SYSTEMS = ['EU', 'UK', 'US', 'STANDARD'] as const;
 export type SizingSystem = (typeof SIZING_SYSTEMS)[number];
+
+export const BAG_STANDARD_SIZES = ['One Size', 'Small', 'Medium', 'Large'] as const;
+
+export function formatVariantSizeLabel(sizeName: string, sizingSystem: SizingSystem): string {
+  const size = sizeName.trim();
+  if (!size) return '';
+  if (sizingSystem === 'STANDARD') return size;
+  return `${sizingSystem} ${size}`;
+}
+
+export function formatVariantDisplay(
+  colourName: string,
+  sizeName: string,
+  sizingSystem: SizingSystem,
+): string {
+  const colour = colourName.trim() || 'Standard';
+  const sizeLabel = formatVariantSizeLabel(sizeName, sizingSystem);
+  return sizeLabel ? `${colour} · ${sizeLabel}` : colour;
+}
 
 export interface FootwearCategoryRecord {
   id: string;
   businessId: string;
   name: string;
   parentId: string | null;
+  parentName?: string | null;
   categoryType: 'sc' | 'simple';
   sizeSetId: string | null;
   artId: string;
@@ -31,7 +51,10 @@ export interface FootwearCategoryRecord {
   sortOrder: number;
   isActive: boolean;
   defaultSizingSystem: SizingSystem;
+  sizeOptions: string[];
   productCount?: number;
+  totalProductCount?: number;
+  childCount?: number;
 }
 
 export interface FootwearProductImageRecord {
@@ -75,7 +98,7 @@ export interface FootwearVariantRecord {
 }
 
 export interface FootwearMetadata {
-  category_scope?: 'footwear';
+  category_scope?: 'footwear' | 'bags' | 'general';
   model?: string | null;
   footwear_type?: FootwearType | string | null;
   gender?: FootwearGender | string | null;
@@ -91,6 +114,9 @@ export interface FootwearProductRecord {
   businessId: string;
   categoryId: string | null;
   categoryName: string;
+  parentCategoryId: string | null;
+  parentCategoryName: string | null;
+  categoryPath: string;
   sku: string;
   name: string;
   brand: string | null;

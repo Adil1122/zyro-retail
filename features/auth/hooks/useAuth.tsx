@@ -7,6 +7,7 @@ import type {
   AuthSessionPayload,
   WorkspaceMembershipSummary,
 } from '@/features/auth/types/auth.types';
+import { isNavModuleEnabled } from '@/constants/navigation';
 import { useZyroStore } from '@/services/zyro-store';
 import type { RoleId, ShopKitId } from '@/types';
 
@@ -142,8 +143,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const selectWorkspace = useCallback(
     async (businessId: string, branchId?: string): Promise<string> => {
       const res = await authService.selectWorkspace({ businessId, branchId });
-      await refreshSession();
-      return res.redirectTo;
+      const refreshed = await refreshSession();
+      if (typeof res?.redirectTo === 'string' && res.redirectTo.startsWith('/')) {
+        return res.redirectTo;
+      }
+      if (typeof refreshed?.recommendedRedirect === 'string' && refreshed.recommendedRedirect.startsWith('/')) {
+        return refreshed.recommendedRedirect;
+      }
+      return isNavModuleEnabled('home') ? '/dashboard' : '/inventory';
     },
     [refreshSession],
   );

@@ -30,7 +30,7 @@ export interface PosCatalogResponse {
   canDiscount: boolean;
   canOverridePrice: boolean;
   canProcessReturns: boolean;
-  categories: Array<{ id: string; name: string; artId: string; counterVisible: boolean }>;
+  categories: Array<{ id: string; parentId: string | null; name: string; artId: string; counterVisible: boolean }>;
   paymentMethods: Array<{ code: string; label: string }>;
   products: FootwearProductRecord[];
   facets: {

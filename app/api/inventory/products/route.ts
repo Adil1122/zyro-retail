@@ -7,6 +7,8 @@ import {
   fetchHydratedFootwearProducts,
   generateBarcodeValue,
   inferFootwearArt,
+  isBagCategoryName,
+  normalizeSizingSystem,
 } from '@/lib/inventory-server';
 import type { Json, TableInsert } from '@/types/database';
 import type { FootwearMetadata, SizingSystem } from '@/types/footwear';
@@ -118,7 +120,9 @@ export async function GET(req: NextRequest) {
     }
 
     if (categoryId && categoryId !== 'all') {
-      filtered = filtered.filter((p) => p.categoryId === categoryId);
+      filtered = filtered.filter(
+        (p) => p.categoryId === categoryId || p.parentCategoryId === categoryId,
+      );
     }
     if (footwearType && footwearType !== 'all') {
       filtered = filtered.filter((p) => p.footwearType.toLowerCase() === footwearType);
@@ -233,18 +237,18 @@ export async function POST(req: NextRequest) {
   const { supabase, businessId, branchId, membership } = guard.ctx;
 
   const name = body.name?.trim();
-  const baseSku = body.sku?.trim().toUpperCase();
+  const autoSkuSeed = (name || 'ITEM')
+    .replace(/[^A-Za-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toUpperCase()
+    .slice(0, 12);
+  const baseSku = (body.sku?.trim() || `${autoSkuSeed || 'PRD'}-${String(Date.now()).slice(-4)}`).toUpperCase();
   const baseSellingPrice = Number(body.baseSellingPrice ?? 0);
   const baseCostPrice = Math.max(0, Number(body.baseCostPrice ?? 0));
-  const sizingSystem: SizingSystem =
-    body.sizingSystem === 'UK' || body.sizingSystem === 'US' ? body.sizingSystem : 'EU';
-  const footwearType = body.footwearType?.trim() || 'Sneakers';
+  const sizingSystem: SizingSystem = normalizeSizingSystem(body.sizingSystem ?? 'EU');
 
   if (!name) {
-    return NextResponse.json({ error: 'Product name is required.' }, { status: 400 });
-  }
-  if (!baseSku) {
-    return NextResponse.json({ error: 'Product SKU is required.' }, { status: 400 });
+    return NextResponse.json({ error: 'Article number / product name is required.' }, { status: 400 });
   }
   if (!Number.isFinite(baseSellingPrice) || baseSellingPrice <= 0) {
     return NextResponse.json({ error: 'Selling price must be greater than 0.' }, { status: 400 });
@@ -255,7 +259,7 @@ export async function POST(req: NextRequest) {
   );
   if (variantsInput.length === 0) {
     return NextResponse.json(
-      { error: 'Add at least one footwear size/colour variant.' },
+      { error: 'Add at least one colour and size variant.' },
       { status: 400 },
     );
   }
@@ -263,41 +267,62 @@ export async function POST(req: NextRequest) {
   // Validate duplicate variant SKUs and barcodes within the payload
   const seenSkus = new Set<string>();
   const seenBarcodes = new Set<string>();
-  const normalizedVariants = variantsInput.map((v, idx) => {
-    const colourName = v.colourName?.trim() || 'Standard';
-    const sizeName = v.sizeName?.trim() || '';
-    const vSys: SizingSystem =
-      v.sizingSystem === 'UK' || v.sizingSystem === 'US' || v.sizingSystem === 'EU'
-        ? v.sizingSystem
+  let normalizedVariants: Array<{
+    colourName: string;
+    sizeName: string;
+    sizingSystem: SizingSystem;
+    variantName: string;
+    sku: string;
+    barcode: string;
+    barcodeType: 'EAN13' | 'EAN8' | 'CODE128' | 'UPC' | 'CUSTOM';
+    costPrice: number;
+    sellingPrice: number;
+    reorderLevel: number;
+    openingStock: number;
+    isActive: boolean;
+  }>;
+
+  try {
+    normalizedVariants = variantsInput.map((v, idx) => {
+      const colourName = v.colourName?.trim() || 'Standard';
+      const sizeName = v.sizeName?.trim() || 'One Size';
+      const vSys: SizingSystem = v.sizingSystem
+        ? normalizeSizingSystem(v.sizingSystem)
         : sizingSystem;
-    const sku = (v.sku?.trim() || buildVariantSku(baseSku, colourName, sizeName)).toUpperCase();
-    const barcode = (v.barcode?.trim() || generateBarcodeValue(sku, idx)).toUpperCase();
+      const sku = (v.sku?.trim() || buildVariantSku(baseSku, colourName, sizeName)).toUpperCase();
+      const barcode = (v.barcode?.trim() || generateBarcodeValue(sku, idx)).toUpperCase();
 
-    if (seenSkus.has(sku)) {
-      throw new Error(`Duplicate variant SKU "${sku}" in request.`);
-    }
-    seenSkus.add(sku);
+      if (seenSkus.has(sku)) {
+        throw new Error(`Duplicate variant SKU "${sku}" in request.`);
+      }
+      seenSkus.add(sku);
 
-    if (seenBarcodes.has(barcode)) {
-      throw new Error(`Duplicate barcode "${barcode}" in request.`);
-    }
-    seenBarcodes.add(barcode);
+      if (seenBarcodes.has(barcode)) {
+        throw new Error(`Duplicate barcode "${barcode}" in request.`);
+      }
+      seenBarcodes.add(barcode);
 
-    return {
-      colourName,
-      sizeName,
-      sizingSystem: vSys,
-      variantName: buildVariantName(colourName, sizeName, vSys),
-      sku,
-      barcode,
-      barcodeType: v.barcodeType ?? 'CODE128',
-      costPrice: Math.max(0, Number(v.costPrice ?? baseCostPrice)),
-      sellingPrice: Math.max(0, Number(v.sellingPrice ?? baseSellingPrice)),
-      reorderLevel: Math.max(0, Number(v.reorderLevel ?? body.reorderLevel ?? 3)),
-      openingStock: Math.max(0, Number(v.openingStock ?? 0)),
-      isActive: v.isActive ?? true,
-    };
-  });
+      return {
+        colourName,
+        sizeName,
+        sizingSystem: vSys,
+        variantName: buildVariantName(colourName, sizeName, vSys),
+        sku,
+        barcode,
+        barcodeType: v.barcodeType ?? 'CODE128',
+        costPrice: Math.max(0, Number(v.costPrice ?? baseCostPrice)),
+        sellingPrice: Math.max(0, Number(v.sellingPrice ?? baseSellingPrice)),
+        reorderLevel: Math.max(0, Number(v.reorderLevel ?? body.reorderLevel ?? 3)),
+        openingStock: Math.max(0, Number(v.openingStock ?? 0)),
+        isActive: v.isActive ?? true,
+      };
+    });
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Invalid variant configuration.' },
+      { status: 400 },
+    );
+  }
 
   // Check duplicate product SKU / variant SKUs / barcodes against DB before inserting
   const [dupProdRes, dupVarRes, dupBcRes] = await Promise.all([
@@ -340,14 +365,40 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Resolve or auto-create Footwear category if not provided
+  // Resolve selected category (parent or child) and derive category scope/unit
   let categoryId = body.categoryId || null;
-  if (!categoryId) {
+  let resolvedCatName = body.footwearType?.trim() || '';
+  if (categoryId) {
+    const { data: catRow } = await supabase
+      .from('categories')
+      .select('id, name, parent_id')
+      .eq('id', categoryId)
+      .eq('business_id', businessId)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (!catRow) {
+      return NextResponse.json({ error: 'Selected category was not found.' }, { status: 400 });
+    }
+    resolvedCatName = catRow.name;
+    if (catRow.parent_id) {
+      const { data: parentRow } = await supabase
+        .from('categories')
+        .select('name')
+        .eq('id', catRow.parent_id)
+        .maybeSingle();
+      if (parentRow?.name) {
+        resolvedCatName = `${parentRow.name} ${catRow.name}`;
+      }
+    }
+  } else {
+    const fallbackName = body.footwearType?.trim() || 'Footwear';
+    resolvedCatName = fallbackName;
     const { data: existingCat } = await supabase
       .from('categories')
       .select('id')
       .eq('business_id', businessId)
-      .ilike('name', footwearType)
+      .ilike('name', fallbackName)
       .is('deleted_at', null)
       .maybeSingle();
     if (existingCat?.id) {
@@ -357,9 +408,9 @@ export async function POST(req: NextRequest) {
         .from('categories')
         .insert({
           business_id: businessId,
-          name: footwearType,
+          name: fallbackName,
           category_type: 'sc',
-          art_id: inferFootwearArt(footwearType),
+          art_id: inferFootwearArt(fallbackName),
           counter_visible: true,
           attribute_schema: { category_scope: 'footwear', default_sizing_system: sizingSystem },
         })
@@ -369,8 +420,11 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  const isBagProduct = sizingSystem === 'STANDARD' || isBagCategoryName(resolvedCatName);
+  const footwearType = body.footwearType?.trim() || (isBagProduct ? 'Bags / Handbags' : resolvedCatName || 'Footwear');
+
   const metadata: FootwearMetadata = {
-    category_scope: 'footwear',
+    category_scope: isBagProduct ? 'bags' : 'footwear',
     model: body.model?.trim() || null,
     footwear_type: footwearType,
     gender: body.gender?.trim() || null,
@@ -389,9 +443,9 @@ export async function POST(req: NextRequest) {
       sku: baseSku,
       name,
       brand: body.brand?.trim() || null,
-      art_id: inferFootwearArt(footwearType),
+      art_id: inferFootwearArt(resolvedCatName || footwearType),
       description: body.description?.trim() || null,
-      unit_of_measure: 'pair',
+      unit_of_measure: isBagProduct ? 'piece' : 'pair',
       is_measured: false,
       track_inventory: true,
       allow_negative_stock: false,
@@ -406,7 +460,7 @@ export async function POST(req: NextRequest) {
 
   if (prodErr || !product) {
     return NextResponse.json(
-      { error: prodErr?.message || 'Failed to create footwear product.' },
+      { error: prodErr?.message || 'Failed to create product.' },
       { status: 400 },
     );
   }

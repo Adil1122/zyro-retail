@@ -10,12 +10,14 @@ import { SearchInput } from '@/components/ui/SearchInput';
 import { SWATCHES } from '@/constants/kits';
 import { useZyro } from '@/hooks/useZyro';
 import { formatRs } from '@/lib/format';
-import type {
-  FootwearProductRecord,
-  FootwearVariantRecord,
-  PosExchangeRecord,
-  PosSaleItemRecord,
-  PosSaleRecord,
+import {
+  formatVariantDisplay,
+  formatVariantSizeLabel,
+  type FootwearProductRecord,
+  type FootwearVariantRecord,
+  type PosExchangeRecord,
+  type PosSaleItemRecord,
+  type PosSaleRecord,
 } from '@/types/footwear';
 import { footwearPosService } from './services/footwear-pos.service';
 
@@ -204,7 +206,11 @@ export function ShoeExchangeFlow() {
         exchangeNumber: res.exchange.exchange_number,
         replacementBillNumber: res.exchange.replacement_bill_number,
         returnedLabel: `${selectedSaleItem.productName} (${selectedSaleItem.variantLabel})`,
-        replacementLabel: `${replacementProduct.name} (${replacementVariant.colourName} · ${replacementVariant.sizingSystem} ${replacementVariant.sizeName})`,
+        replacementLabel: `${replacementProduct.name} (${formatVariantDisplay(
+          replacementVariant.colourName,
+          replacementVariant.sizeName,
+          replacementVariant.sizingSystem,
+        )})`,
         netDiff: res.exchange.net_difference_amount,
         restocked: res.exchange.restocked,
       });
@@ -490,7 +496,8 @@ export function ShoeExchangeFlow() {
                           <div className="min-w-0">
                             <div className="font-semibold text-[13px] truncate">{p.name}</div>
                             <div className="text-[11px] text-[#52666A] truncate">
-                              {p.brand || p.footwearType} · {p.totalStock} pairs
+                              {p.brand || p.categoryPath || p.footwearType} · {p.totalStock}{' '}
+                              {p.unitOfMeasure === 'piece' ? 'pcs' : 'pairs'}
                             </div>
                           </div>
                           <span className="font-bold text-[12px] num shrink-0">
@@ -506,7 +513,10 @@ export function ShoeExchangeFlow() {
               {replacementProduct ? (
                 <div className="space-y-3">
                   <div className="text-[13px] font-semibold text-[#0B2A2F]">
-                    {replacementProduct.name} · Available variants ({replacementProduct.sizingSystem})
+                    {replacementProduct.name} · Available variants
+                    {replacementProduct.sizingSystem !== 'STANDARD'
+                      ? ` (${replacementProduct.sizingSystem})`
+                      : ''}
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     {replacementProduct.variants
@@ -536,7 +546,7 @@ export function ShoeExchangeFlow() {
                               <span className="truncate">{v.colourName}</span>
                             </div>
                             <div className="font-bold text-[14px]">
-                              {v.sizingSystem} {v.sizeName}
+                              {formatVariantSizeLabel(v.sizeName, v.sizingSystem)}
                             </div>
                             <div className="text-[11px] text-[#52666A] num">
                               {soldOut ? 'Sold out' : `${v.availableStock} left · ${formatRs(v.sellingPrice)}`}

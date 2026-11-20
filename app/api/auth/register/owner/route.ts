@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { isNavModuleEnabled } from '@/constants/navigation';
 import { normalizePhoneToE164, validatePasswordStrength } from '@/lib/auth/phone';
 import {
   ACTIVE_BRANCH_COOKIE,
@@ -230,7 +231,8 @@ export async function POST(req: NextRequest) {
         },
         signedIn: !signInError,
         session: sessionPayload,
-        redirectTo: '/home',
+        redirectTo:
+          sessionPayload?.recommendedRedirect || (isNavModuleEnabled('home') ? '/home' : '/inventory'),
       },
       { status: 201 },
     );

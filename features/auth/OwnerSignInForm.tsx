@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AlertTriangle, CheckCircle2, Phone } from 'lucide-react';
+import { isNavModuleEnabled } from '@/constants/navigation';
 import { DevOtpNotice } from '@/features/auth/components/DevOtpNotice';
 import { PhoneInputField } from '@/features/auth/components/PhoneInputField';
 import { useAuth } from '@/features/auth/hooks/useAuth';
@@ -97,13 +98,41 @@ export function OwnerSignInForm({ mode = 'signin' }: { mode?: 'signin' | 'forgot
         rememberMe: keep,
       });
 
-      await auth.refreshSession();
+      const refreshedSession = await auth.refreshSession();
+
+      const defaultLanding = isNavModuleEnabled('home') ? '/dashboard' : '/inventory';
+      const candidateRedirect =
+        (typeof res?.redirectTo === 'string' && res.redirectTo.startsWith('/') ? res.redirectTo : '') ||
+        (typeof res?.session?.recommendedRedirect === 'string' && res.session.recommendedRedirect.startsWith('/')
+          ? res.session.recommendedRedirect
+          : '') ||
+        (typeof refreshedSession?.recommendedRedirect === 'string' &&
+        refreshedSession.recommendedRedirect.startsWith('/')
+          ? refreshedSession.recommendedRedirect
+          : '') ||
+        defaultLanding;
 
       const nextParam = searchParams.get('next');
+      const isInactiveHomeNext =
+        !isNavModuleEnabled('home') &&
+        Boolean(
+          nextParam &&
+            (nextParam === '/' ||
+              nextParam === '/dashboard' ||
+              nextParam === '/home' ||
+              nextParam === '/cashier/home' ||
+              nextParam === '/stockkeeper/home'),
+        );
+      const accountStatus = res?.session?.accountStatus ?? refreshedSession?.accountStatus;
+
       const safeNext =
-        nextParam && nextParam.startsWith('/') && !nextParam.startsWith('//') && res.session.accountStatus === 'active'
+        nextParam &&
+        nextParam.startsWith('/') &&
+        !nextParam.startsWith('//') &&
+        !isInactiveHomeNext &&
+        accountStatus === 'active'
           ? nextParam
-          : res.redirectTo;
+          : candidateRedirect;
 
       notify('Signed in to Zyro POS', 'ok');
       router.push(safeNext);
@@ -188,7 +217,11 @@ export function OwnerSignInForm({ mode = 'signin' }: { mode?: 'signin' | 'forgot
 
       await auth.refreshSession();
       notify('Password updated · signed in', 'ok');
-      router.push(res.redirectTo || '/sign-in');
+      const resetTarget =
+        typeof res?.redirectTo === 'string' && res.redirectTo.startsWith('/')
+          ? res.redirectTo
+          : '/sign-in';
+      router.push(resetTarget);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Unable to update password.');
       if (err instanceof AuthApiError && err.code?.startsWith('OTP_TOKEN')) {

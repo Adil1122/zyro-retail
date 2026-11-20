@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireWorkspaceContext } from '@/lib/api/workspace-guard';
-import { inferFootwearArt } from '@/lib/inventory-server';
+import {
+  extractCategorySizeOptions,
+  inferFootwearArt,
+  isBagCategoryName,
+  normalizeSizingSystem,
+} from '@/lib/inventory-server';
 import type { Json, TableUpdate } from '@/types/database';
 import type { SizingSystem } from '@/types/footwear';
 
@@ -18,8 +23,10 @@ export async function PATCH(
 
   const body = (await req.json().catch(() => null)) as {
     name?: string;
+    parentId?: string | null;
     sizeSetId?: string | null;
     defaultSizingSystem?: SizingSystem;
+    sizeOptions?: string[];
     counterVisible?: boolean;
     sortOrder?: number;
     isActive?: boolean;
@@ -31,7 +38,7 @@ export async function PATCH(
 
   const { data: existing } = await supabase
     .from('categories')
-    .select('id, name, attribute_schema')
+    .select('id, name, parent_id, attribute_schema')
     .eq('id', id)
     .eq('business_id', businessId)
     .is('deleted_at', null)
@@ -42,20 +49,79 @@ export async function PATCH(
   }
 
   const updatePayload: TableUpdate<'categories'> = {};
+  let nextParentName: string | null = null;
+
+  if (body.parentId !== undefined) {
+    const nextParentId = body.parentId ? body.parentId.trim() : null;
+    if (nextParentId === id) {
+      return NextResponse.json({ error: 'A category cannot be its own parent.' }, { status: 400 });
+    }
+    if (nextParentId) {
+      // Prevent turning a category that already has children into a child category
+      const { count: ownChildren } = await supabase
+        .from('categories')
+        .select('id', { count: 'exact', head: true })
+        .eq('business_id', businessId)
+        .eq('parent_id', id)
+        .is('deleted_at', null);
+
+      if ((ownChildren ?? 0) > 0) {
+        return NextResponse.json(
+          { error: 'Cannot nest a category that already has child categories under another parent.' },
+          { status: 400 },
+        );
+      }
+
+      const { data: parentRow } = await supabase
+        .from('categories')
+        .select('id, name, parent_id')
+        .eq('id', nextParentId)
+        .eq('business_id', businessId)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (!parentRow) {
+        return NextResponse.json({ error: 'Selected parent category not found.' }, { status: 400 });
+      }
+      if (parentRow.parent_id) {
+        return NextResponse.json(
+          { error: 'Please select a top-level parent category.' },
+          { status: 400 },
+        );
+      }
+      nextParentName = parentRow.name;
+    }
+    updatePayload.parent_id = nextParentId;
+  }
+
+  const nextName =
+    typeof body.name === 'string' && body.name.trim() ? body.name.trim() : existing.name;
+
   if (typeof body.name === 'string' && body.name.trim()) {
-    updatePayload.name = body.name.trim();
-    updatePayload.art_id = inferFootwearArt(body.name.trim());
+    updatePayload.name = nextName;
+    updatePayload.art_id = inferFootwearArt(nextParentName || nextName);
   }
   if (body.sizeSetId !== undefined) updatePayload.size_set_id = body.sizeSetId;
   if (typeof body.counterVisible === 'boolean') updatePayload.counter_visible = body.counterVisible;
   if (typeof body.sortOrder === 'number') updatePayload.sort_order = body.sortOrder;
   if (typeof body.isActive === 'boolean') updatePayload.is_active = body.isActive;
-  if (body.defaultSizingSystem) {
+
+  if (body.defaultSizingSystem !== undefined || body.sizeOptions !== undefined) {
     const prevSchema = (existing.attribute_schema ?? {}) as Record<string, unknown>;
+    const nextSystem = body.defaultSizingSystem
+      ? normalizeSizingSystem(body.defaultSizingSystem)
+      : normalizeSizingSystem(prevSchema.default_sizing_system ?? 'EU');
+    const nextSizeOptions =
+      body.sizeOptions !== undefined
+        ? Array.from(new Set(body.sizeOptions.map((s) => String(s ?? '').trim()).filter(Boolean)))
+        : extractCategorySizeOptions(prevSchema);
+
     updatePayload.attribute_schema = {
       ...prevSchema,
-      category_scope: 'footwear',
-      default_sizing_system: body.defaultSizingSystem,
+      category_scope:
+        isBagCategoryName(nextName) || isBagCategoryName(nextParentName) ? 'bags' : 'footwear',
+      default_sizing_system: nextSystem,
+      size_options: nextSizeOptions,
     } as unknown as Json;
   }
 
@@ -68,7 +134,11 @@ export async function PATCH(
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    const status = error.code === '23505' ? 409 : 400;
+    return NextResponse.json(
+      { error: error.code === '23505' ? 'A category with this name already exists.' : error.message },
+      { status },
+    );
   }
 
   const schema = (updated.attribute_schema ?? {}) as Record<string, unknown>;
@@ -77,6 +147,7 @@ export async function PATCH(
       id: updated.id,
       businessId: updated.business_id,
       parentId: updated.parent_id,
+      parentName: nextParentName,
       name: updated.name,
       categoryType: updated.category_type === 'simple' ? 'simple' : 'sc',
       sizeSetId: updated.size_set_id,
@@ -84,7 +155,8 @@ export async function PATCH(
       counterVisible: updated.counter_visible,
       sortOrder: updated.sort_order,
       isActive: updated.is_active,
-      defaultSizingSystem: (schema.default_sizing_system as SizingSystem) || 'EU',
+      defaultSizingSystem: normalizeSizingSystem(schema.default_sizing_system ?? 'EU'),
+      sizeOptions: extractCategorySizeOptions(schema),
     },
   });
 }
@@ -101,17 +173,31 @@ export async function DELETE(
   const { id } = await context.params;
   const { supabase, businessId } = guard.ctx;
 
-  // Check if active products reference this category
-  const { count } = await supabase
-    .from('products')
-    .select('id', { count: 'exact', head: true })
-    .eq('business_id', businessId)
-    .eq('category_id', id)
-    .is('deleted_at', null);
+  const [{ count: productCount }, { count: childCount }] = await Promise.all([
+    supabase
+      .from('products')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', businessId)
+      .eq('category_id', id)
+      .is('deleted_at', null),
+    supabase
+      .from('categories')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', businessId)
+      .eq('parent_id', id)
+      .is('deleted_at', null),
+  ]);
 
-  if ((count ?? 0) > 0) {
+  if ((childCount ?? 0) > 0) {
     return NextResponse.json(
-      { error: `Cannot delete category while ${count} footwear product(s) are assigned to it.` },
+      { error: `Cannot delete this parent category while ${childCount} child categor${childCount === 1 ? 'y is' : 'ies are'} under it.` },
+      { status: 409 },
+    );
+  }
+
+  if ((productCount ?? 0) > 0) {
+    return NextResponse.json(
+      { error: `Cannot delete category while ${productCount} product(s) are assigned to it.` },
       { status: 409 },
     );
   }
@@ -128,3 +214,4 @@ export async function DELETE(
 
   return NextResponse.json({ deleted: true });
 }
+

@@ -1,6 +1,8 @@
 'use client';
 
 import React from 'react';
+import { ShoppingBag } from 'lucide-react';
+import { SWATCHES } from '@/constants/kits';
 import { getArtVisual } from '@/lib/inventory';
 import type { ProductItem } from '@/types';
 
@@ -25,16 +27,18 @@ export function ProductArtwork({
   size = 56,
   className = '',
 }: ProductArtworkProps) {
+  const isBag = artId === 'bag';
   const syntheticItem: ProductItem = item ?? {
     id: 'art',
-    art: (artId === 'chappal' || artId === 'khussa' || artId === 'sneaker' ? artId : 'sneaker'),
-    name: alt || 'Footwear',
-    cat: 'footwear',
+    art: artId === 'chappal' || artId === 'khussa' || artId === 'sneaker' ? artId : 'sneaker',
+    name: alt || (isBag ? 'Bag' : 'Footwear'),
+    cat: isBag ? 'bags' : 'footwear',
     price: 0,
-    sku: 'FTW',
+    sku: isBag ? 'BAG' : 'FTW',
     colours: [colourName || 'Black'],
   };
   const art = getArtVisual(syntheticItem, colourIdx);
+  const bagTint = (colourName && SWATCHES[colourName]) || '#08343A';
 
   return (
     <div
@@ -49,6 +53,12 @@ export function ProductArtwork({
           referrerPolicy="no-referrer"
           className="w-full h-full object-cover"
         />
+      ) : isBag ? (
+        <ShoppingBag
+          style={{ width: Math.round(size * 0.52), height: Math.round(size * 0.52), color: bagTint }}
+          strokeWidth={2}
+          aria-hidden="true"
+        />
       ) : (
         <svg viewBox="0 0 120 120" className="w-[82%] h-[82%]" aria-hidden="true">
           <path d={art.body} fill={art.fill} />
@@ -59,3 +69,4 @@ export function ProductArtwork({
     </div>
   );
 }
+

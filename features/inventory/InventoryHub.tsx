@@ -42,18 +42,26 @@ import {
 import { useZyro } from '@/hooks/useZyro';
 import { formatRs } from '@/lib/format';
 import {
-  FOOTWEAR_TYPES,
+  formatVariantDisplay,
+  formatVariantSizeLabel,
+  type FootwearCategoryRecord,
   type FootwearProductRecord,
   type StockMovementRecord,
 } from '@/types/footwear';
+
+function getUnitLabel(product: FootwearProductRecord | null | undefined, plural = true): string {
+  const isPiece = product?.unitOfMeasure === 'piece';
+  if (isPiece) return plural ? 'pcs' : 'piece';
+  return plural ? 'pairs' : 'pair';
+}
 
 const ADJUSTMENT_TYPES: Array<{
   value: 'damage' | 'shrinkage' | 'adjustment' | 'opening_stock';
   label: string;
   defaultReason: string;
 }> = [
-  { value: 'damage', label: 'Damaged footwear (−)', defaultReason: 'Damaged box or sole defect' },
-  { value: 'shrinkage', label: 'Lost / shrinkage (−)', defaultReason: 'Missing pair during shelf check' },
+  { value: 'damage', label: 'Damaged stock (−)', defaultReason: 'Damaged item or packaging defect' },
+  { value: 'shrinkage', label: 'Lost / shrinkage (−)', defaultReason: 'Missing stock during shelf check' },
   { value: 'adjustment', label: 'Found / manual correction (+/−)', defaultReason: 'Found during shelf check' },
   { value: 'opening_stock', label: 'Opening / restock entry (+)', defaultReason: 'Opening stock count entry' },
 ];
@@ -64,7 +72,7 @@ export function InventoryHub() {
 
   const [branchId, setBranchId] = useState<string>('');
   const [query, setQuery] = useState('');
-  const [typeFilter, setTypeFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
   const [brandFilter, setBrandFilter] = useState('all');
   const [sizeFilter, setSizeFilter] = useState('all');
   const [colourFilter, setColourFilter] = useState('all');
@@ -73,6 +81,7 @@ export function InventoryHub() {
   const [page, setPage] = useState(1);
   const [tab, setTab] = useState<string>('all');
 
+  const [categories, setCategories] = useState<FootwearCategoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [data, setData] = useState<InventoryProductsResponse | null>(null);
@@ -106,6 +115,47 @@ export function InventoryHub() {
     hasPermission('settings.manage') ||
     hasPermission('reports.view');
 
+  useEffect(() => {
+    let cancelled = false;
+    footwearInventoryService
+      .listCategories()
+      .then((res) => {
+        if (!cancelled) setCategories(res.categories);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const categoryFilterOptions = useMemo(() => {
+    const parents = categories.filter((c) => !c.parentId && c.isActive);
+    const childrenByParent = new Map<string, FootwearCategoryRecord[]>();
+    const parentIds = new Set(parents.map((p) => p.id));
+    for (const c of categories) {
+      if (c.parentId && c.isActive) {
+        const list = childrenByParent.get(c.parentId) ?? [];
+        list.push(c);
+        childrenByParent.set(c.parentId, list);
+      }
+    }
+    const opts: Array<{ value: string; label: string }> = [
+      { value: 'all', label: 'All categories' },
+    ];
+    for (const p of parents) {
+      opts.push({ value: p.id, label: p.name });
+      for (const child of childrenByParent.get(p.id) ?? []) {
+        opts.push({ value: child.id, label: `↳ ${child.name}` });
+      }
+    }
+    for (const c of categories) {
+      if (c.parentId && !parentIds.has(c.parentId) && c.isActive) {
+        opts.push({ value: c.id, label: c.name });
+      }
+    }
+    return opts;
+  }, [categories]);
+
   const loadProducts = useCallback(async () => {
     setLoading(true);
     setErrorMsg(null);
@@ -115,7 +165,7 @@ export function InventoryHub() {
       const res = await footwearInventoryService.listProducts({
         branchId: branchId || undefined,
         q: query.trim() || undefined,
-        footwearType: typeFilter !== 'all' ? typeFilter : undefined,
+        categoryId: categoryFilter !== 'all' ? categoryFilter : undefined,
         brand: brandFilter !== 'all' ? brandFilter : undefined,
         size: sizeFilter !== 'all' ? sizeFilter : undefined,
         colour: colourFilter !== 'all' ? colourFilter : undefined,
@@ -130,11 +180,11 @@ export function InventoryHub() {
         setBranchId(res.branch.id);
       }
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Failed to load footwear inventory');
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to load inventory');
     } finally {
       setLoading(false);
     }
-  }, [branchId, query, typeFilter, brandFilter, sizeFilter, colourFilter, statusFilter, sortBy, page, tab]);
+  }, [branchId, query, categoryFilter, brandFilter, sizeFilter, colourFilter, statusFilter, sortBy, page, tab]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -212,12 +262,13 @@ export function InventoryHub() {
   const branches = data?.branches ?? [];
 
   const getStockBadge = (p: FootwearProductRecord) => {
+    const unit = getUnitLabel(p, true);
     if (!p.isActive) return { text: 'Inactive', tone: 'neutral' as const };
     if (p.totalStock <= 0) return { text: 'Out of stock', tone: 'err' as const };
     if (p.lowStockVariants > 0 || p.totalStock <= 5) {
-      return { text: `${p.totalStock} pairs · ${p.lowStockVariants} low`, tone: 'warn' as const };
+      return { text: `${p.totalStock} ${unit} · ${p.lowStockVariants} low`, tone: 'warn' as const };
     }
-    return { text: `${p.totalStock} pairs`, tone: 'ok' as const };
+    return { text: `${p.totalStock} ${unit}`, tone: 'ok' as const };
   };
 
   const openAdjustFor = (p: FootwearProductRecord) => {
@@ -341,12 +392,12 @@ export function InventoryHub() {
   return (
     <div className="space-y-5">
       <PageHeader
-        eyebrow={canManageStock ? 'Footwear stock room & catalog' : 'Cashier footwear stock lookup'}
-        title="Stock & footwear"
+        eyebrow={canManageStock ? 'Stock room & catalog' : 'Cashier stock lookup'}
+        title="Stock & catalog"
         subtitle={
           canManageStock
-            ? 'Track footwear pairs by size (EU/UK/US) and colour across branches, adjust stock, and print barcodes.'
-            : 'Read-only lookup to check footwear sizes, colours, barcodes, and branch stock.'
+            ? 'Manage categories, Footwear and Bags / Handbags variants by colour and size, branch stock, and barcodes.'
+            : 'Read-only lookup to check sizes, colours, barcodes, and branch stock.'
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
@@ -384,7 +435,7 @@ export function InventoryHub() {
                 </Link>
                 <Link href="/inventory/items/new">
                   <Button variant="dark" size="lg">
-                    <Plus className="w-4 h-4" /> Add footwear
+                    <Plus className="w-4 h-4" /> Add product
                   </Button>
                 </Link>
               </>
@@ -398,13 +449,13 @@ export function InventoryHub() {
       {/* Summary metrics */}
       <div className={`grid grid-cols-1 sm:grid-cols-2 ${isOwner ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-4`}>
         <StatCard
-          label="Footwear products"
+          label="Products"
           value={summary?.totalProducts ?? 0}
-          sub={`${summary?.totalVariants ?? 0} size/colour variants`}
+          sub={`${summary?.totalVariants ?? 0} colour/size variants`}
           icon={<Boxes className="w-4 h-4" />}
         />
         <StatCard
-          label="Pairs on shelf"
+          label="Units on shelf"
           value={summary?.totalPairsOnHand ?? 0}
           sub={data?.branch?.name ? `Branch: ${data.branch.name}` : 'Active branch'}
           icon={<Layers className="w-4 h-4" />}
@@ -443,7 +494,7 @@ export function InventoryHub() {
             setPage(1);
           }}
           tabs={[
-            { id: 'all', label: 'All footwear', count: summary?.totalProducts ?? 0 },
+            { id: 'all', label: 'All products', count: summary?.totalProducts ?? 0 },
             {
               id: 'low',
               label: 'Low stock',
@@ -470,19 +521,16 @@ export function InventoryHub() {
                   setQuery(v);
                   setPage(1);
                 }}
-                placeholder="Search footwear, brand, model, SKU, or barcode..."
+                placeholder="Search article, product, brand, SKU, or barcode..."
               />
             </div>
             <Select
-              value={typeFilter}
+              value={categoryFilter}
               onChange={(e) => {
-                setTypeFilter(e.target.value);
+                setCategoryFilter(e.target.value);
                 setPage(1);
               }}
-              options={[
-                { value: 'all', label: 'All footwear types' },
-                ...FOOTWEAR_TYPES.map((t) => ({ value: t, label: t })),
-              ]}
+              options={categoryFilterOptions}
             />
             <Select
               value={brandFilter}
@@ -633,16 +681,16 @@ export function InventoryHub() {
             onRowClick={(p) => setSelectedId(p.id)}
             emptyState={
               <EmptyState
-                title={loading ? 'Loading footwear inventory...' : 'No footwear items found'}
+                title={loading ? 'Loading inventory...' : 'No products found'}
                 body={
                   loading
                     ? 'Fetching live catalog and branch stock from Supabase...'
-                    : 'Clear filters or add your first footwear product with sizes and colours.'
+                    : 'Clear filters or add your first product with colours and sizes.'
                 }
                 action={
                   !loading && canManageStock ? (
                     <Link href="/inventory/items/new">
-                      <Button variant="primary">Add footwear</Button>
+                      <Button variant="primary">Add product</Button>
                     </Link>
                   ) : undefined
                 }
@@ -651,7 +699,7 @@ export function InventoryHub() {
             columns={[
               {
                 key: 'item',
-                header: 'Footwear',
+                header: 'Product',
                 render: (p) => (
                   <div className="flex items-center gap-3 min-w-[220px]">
                     <ProductArtwork
@@ -664,7 +712,7 @@ export function InventoryHub() {
                     <div className="min-w-0">
                       <div className="font-semibold text-[#0B2A2F] truncate">{p.name}</div>
                       <div className="text-[12px] text-[#52666A] truncate">
-                        {[p.brand, p.model, p.gender].filter(Boolean).join(' · ') || p.sku}{' '}
+                        {[p.brand, p.model].filter(Boolean).join(' · ') || p.sku}{' '}
                         <span className="mono text-[11px]">({p.sku})</span>
                       </div>
                     </div>
@@ -673,10 +721,10 @@ export function InventoryHub() {
               },
               {
                 key: 'type',
-                header: 'Type',
+                header: 'Category',
                 render: (p) => (
-                  <span className="inline-flex px-2.5 py-0.5 rounded-full text-[12px] font-semibold bg-[#F1E6D6] text-[#6B4A1E]">
-                    {p.footwearType}
+                  <span className="inline-flex px-2.5 py-0.5 rounded-full text-[12px] font-semibold bg-[#F1E6D6] text-[#6B4A1E] whitespace-nowrap">
+                    {p.categoryPath || p.categoryName || p.footwearType}
                   </span>
                 ),
               },
@@ -687,7 +735,8 @@ export function InventoryHub() {
                   <div className="text-[13px] text-[#52666A]">
                     <div>
                       {p.colours.length} colour{p.colours.length === 1 ? '' : 's'} · {p.sizes.length} size
-                      {p.sizes.length === 1 ? '' : 's'} ({p.sizingSystem})
+                      {p.sizes.length === 1 ? '' : 's'}
+                      {p.sizingSystem !== 'STANDARD' ? ` (${p.sizingSystem})` : ''}
                     </div>
                     <div className="text-[11px] text-[#5F7174] truncate max-w-[200px]">
                       {p.sizes.slice(0, 6).join(', ')}
@@ -723,7 +772,10 @@ export function InventoryHub() {
                 render: (p) => (
                   <span className="font-bold num">
                     {formatRs(p.baseSellingPrice)}
-                    <span className="text-[11px] font-normal text-[#52666A]"> / pair</span>
+                    <span className="text-[11px] font-normal text-[#52666A]">
+                      {' '}
+                      / {getUnitLabel(p, false)}
+                    </span>
                   </span>
                 ),
               },
@@ -759,14 +811,14 @@ export function InventoryHub() {
         </>
       )}
 
-      {/* Footwear Detail Drawer */}
+      {/* Product Detail Drawer */}
       <Drawer
         open={!!selected}
         onClose={() => setSelectedId(null)}
         title={selected?.name || ''}
         subtitle={
           selected
-            ? `${selected.brand ? `${selected.brand} · ` : ''}SKU ${selected.sku} · ${formatRs(selected.baseSellingPrice)} / pair`
+            ? `${selected.brand ? `${selected.brand} · ` : ''}SKU ${selected.sku} · ${formatRs(selected.baseSellingPrice)} / ${getUnitLabel(selected, false)}`
             : ''
         }
         badge={
@@ -787,7 +839,7 @@ export function InventoryHub() {
                 </Button>
               )}
               <Link href={`/inventory/items/${selected.id}`}>
-                <Button variant="primary">Edit footwear</Button>
+                <Button variant="primary">Edit product</Button>
               </Link>
               {isOwner && (
                 <Button
@@ -814,9 +866,11 @@ export function InventoryHub() {
               />
               <div className="space-y-1 text-[13px] text-[#52666A] flex-1">
                 <div>
-                  Type: <strong className="text-[#0B2A2F]">{selected.footwearType}</strong>
-                  {selected.gender ? ` · ${selected.gender}` : ''}
-                  {` · ${selected.sizingSystem} sizing`}
+                  Category:{' '}
+                  <strong className="text-[#0B2A2F]">
+                    {selected.categoryPath || selected.categoryName || selected.footwearType}
+                  </strong>
+                  {selected.sizingSystem !== 'STANDARD' ? ` · ${selected.sizingSystem} sizing` : ''}
                 </div>
                 {(selected.brand || selected.model) && (
                   <div>
@@ -865,7 +919,7 @@ export function InventoryHub() {
                       <span className="font-semibold text-[14px] text-[#0B2A2F]">{colour}</span>
                     </div>
                     <span className="text-[12px] text-[#52666A] num">
-                      {list.reduce((s, v) => s + v.stockOnHand, 0)} pairs
+                      {list.reduce((s, v) => s + v.stockOnHand, 0)} {getUnitLabel(selected, true)}
                     </span>
                   </div>
                   <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
@@ -881,7 +935,7 @@ export function InventoryHub() {
                         }`}
                       >
                         <div className="text-[11px] font-semibold">
-                          {v.sizingSystem} {v.sizeName || 'Std'}
+                          {formatVariantSizeLabel(v.sizeName || 'Std', v.sizingSystem)}
                         </div>
                         <div className="text-[14px] font-bold num">{v.stockOnHand}</div>
                         <div className="text-[10px] text-[#52666A] num">{formatRs(v.sellingPrice)}</div>
@@ -897,6 +951,11 @@ export function InventoryHub() {
               const activeVar =
                 selected.variants.find((v) => v.id === tagVariantId) ?? selected.variants[0];
               const code = activeVar.primaryBarcode || activeVar.sku;
+              const activeLabel = formatVariantDisplay(
+                activeVar.colourName,
+                activeVar.sizeName,
+                activeVar.sizingSystem,
+              );
               return (
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -913,13 +972,13 @@ export function InventoryHub() {
                     onChange={(e) => setTagVariantId(e.target.value)}
                     options={selected.variants.map((v) => ({
                       value: v.id,
-                      label: `${v.variantName} (${v.primaryBarcode || v.sku})`,
+                      label: `${formatVariantDisplay(v.colourName, v.sizeName, v.sizingSystem)} (${v.primaryBarcode || v.sku})`,
                     }))}
                   />
                   <div className="zyro-print-area">
                     <BarcodePreview
                       code={code}
-                      label={`${selected.name} · ${activeVar.variantName}`}
+                      label={`${selected.name} · ${activeLabel}`}
                       priceText={formatRs(activeVar.sellingPrice)}
                     />
                   </div>
@@ -983,12 +1042,12 @@ export function InventoryHub() {
         <div className="space-y-4">
           {selected && (
             <Select
-              label="Size & colour variant"
+              label="Colour & size variant"
               value={adjVariantId}
               onChange={(e) => setAdjVariantId(e.target.value)}
               options={selected.variants.map((v) => ({
                 value: v.id,
-                label: `${v.variantName} (${v.stockOnHand} pairs on shelf)`,
+                label: `${formatVariantDisplay(v.colourName, v.sizeName, v.sizingSystem)} (${v.stockOnHand} ${getUnitLabel(selected, true)} on shelf)`,
               }))}
             />
           )}
@@ -1009,11 +1068,11 @@ export function InventoryHub() {
             options={ADJUSTMENT_TYPES.map((t) => ({ value: t.value, label: t.label }))}
           />
           <Input
-            label="Quantity change (pairs)"
+            label={`Quantity change (${getUnitLabel(selected, true)})`}
             type="number"
             value={adjDelta}
             onChange={(e) => setAdjDelta(e.target.value)}
-            hint="Use negative (−) to remove damaged/lost pairs, positive (+) to add found stock"
+            hint="Use negative (−) to remove damaged/lost stock, positive (+) to add found stock"
           />
           <Input
             label="Reason"
@@ -1043,13 +1102,13 @@ export function InventoryHub() {
       >
         <div className="space-y-4">
           <Input
-            label="Selling price per pair (Rs)"
+            label={`Selling price per ${getUnitLabel(selected, false)} (Rs)`}
             type="number"
             value={newPrice}
             onChange={(e) => setNewPrice(e.target.value)}
           />
           <Input
-            label="Cost price per pair (Rs)"
+            label={`Cost price per ${getUnitLabel(selected, false)} (Rs)`}
             type="number"
             value={newCost}
             onChange={(e) => setNewCost(e.target.value)}
@@ -1061,9 +1120,9 @@ export function InventoryHub() {
         open={deleteOpen && !!selected}
         onClose={() => setDeleteOpen(false)}
         onConfirm={() => void handleDeleteProduct()}
-        title={`Archive ${selected?.name || 'footwear'}?`}
-        body="This hides the footwear product from the POS counter and active stock. Historical sales and receipts remain intact."
-        confirmLabel="Archive footwear"
+        title={`Archive ${selected?.name || 'product'}?`}
+        body="This hides the product from the POS counter and active stock. Historical sales and receipts remain intact."
+        confirmLabel="Archive product"
       />
     </div>
   );

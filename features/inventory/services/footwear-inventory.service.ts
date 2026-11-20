@@ -109,8 +109,10 @@ export const footwearInventoryService = {
 
   createCategory(payload: {
     name: string;
+    parentId?: string | null;
     sizeSetId?: string | null;
     defaultSizingSystem?: SizingSystem;
+    sizeOptions?: string[];
     counterVisible?: boolean;
   }) {
     return apiJson<{ category: FootwearCategoryRecord }>('/api/inventory/categories', {
@@ -123,8 +125,10 @@ export const footwearInventoryService = {
     id: string,
     payload: {
       name?: string;
+      parentId?: string | null;
       sizeSetId?: string | null;
       defaultSizingSystem?: SizingSystem;
+      sizeOptions?: string[];
       counterVisible?: boolean;
       sortOrder?: number;
       isActive?: boolean;

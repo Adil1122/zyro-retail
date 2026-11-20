@@ -12,11 +12,13 @@ import { SWATCHES } from '@/constants/kits';
 import { useZyro } from '@/hooks/useZyro';
 import { formatRs } from '@/lib/format';
 import type { BillDiscount } from '@/types';
-import type {
-  FootwearProductRecord,
-  FootwearVariantRecord,
-  PosHeldBillRecord,
-  SizingSystem,
+import {
+  formatVariantDisplay,
+  formatVariantSizeLabel,
+  type FootwearProductRecord,
+  type FootwearVariantRecord,
+  type PosHeldBillRecord,
+  type SizingSystem,
 } from '@/types/footwear';
 
 export interface FootwearCartLine {
@@ -101,7 +103,13 @@ export function VariantPickerModal({
       open={!!product}
       onClose={onClose}
       title={product.name}
-      subtitle={[product.brand, product.footwearType, `${product.sizingSystem} sizing`].filter(Boolean).join(' · ')}
+      subtitle={[
+        product.brand,
+        product.categoryPath || product.categoryName,
+        product.sizingSystem !== 'STANDARD' ? `${product.sizingSystem} sizing` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ')}
       maxWidth="md"
     >
       <div className="space-y-5">
@@ -115,7 +123,11 @@ export function VariantPickerModal({
           <div className="min-w-0 flex-1">
             <div className="font-semibold text-[15px] text-[#0B2A2F]">
               {activeVariant
-                ? `${activeVariant.colourName} · ${activeVariant.sizingSystem} ${activeVariant.sizeName}`
+                ? formatVariantDisplay(
+                    activeVariant.colourName,
+                    activeVariant.sizeName,
+                    activeVariant.sizingSystem,
+                  )
                 : 'Select variant'}
             </div>
             {activeVariant && (
@@ -179,7 +191,9 @@ export function VariantPickerModal({
 
         <div className="space-y-2">
           <div className="text-[13px] font-semibold text-[#0B2A2F]">
-            Size ({activeVariant?.sizingSystem || product.sizingSystem})
+            {(activeVariant?.sizingSystem || product.sizingSystem) === 'STANDARD'
+              ? 'Size'
+              : `Size (${activeVariant?.sizingSystem || product.sizingSystem})`}
           </div>
           <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
             {variantsForColour.map((v) => {
@@ -200,7 +214,7 @@ export function VariantPickerModal({
                   }`}
                 >
                   <div className="font-bold text-[14px]">
-                    {v.sizingSystem} {v.sizeName}
+                    {formatVariantSizeLabel(v.sizeName, v.sizingSystem)}
                   </div>
                   <div className={`text-[11px] ${active ? 'text-[#C9DADB]' : 'text-[#52666A]'}`}>
                     {v.availableStock} left
@@ -410,11 +424,11 @@ export function LineEditModal({
 
   const handleSave = () => {
     if (qty < 1) {
-      setErr('Quantity must be at least 1 pair.');
+      setErr('Quantity must be at least 1.');
       return;
     }
     if (qty > line.availableStock) {
-      setErr(`Only ${line.availableStock} pairs available in this branch.`);
+      setErr(`Only ${line.availableStock} available in this branch.`);
       return;
     }
     if (lineDiscount < 0 || lineDiscount > maxLineDiscount) {
@@ -578,7 +592,7 @@ export function HeldBillsDrawer({
                     </span>
                   </div>
                   <div className="text-[13px] text-[#3D5357]">
-                    {qtyCount} pair{qtyCount === 1 ? '' : 's'} ·{' '}
+                    {qtyCount} item{qtyCount === 1 ? '' : 's'} ·{' '}
                     <span className="font-bold num">{formatRs(h.totalEstimate)}</span>
                     {h.customerName ? ` · ${h.customerName}` : ''}
                   </div>

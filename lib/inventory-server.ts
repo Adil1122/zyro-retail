@@ -8,14 +8,40 @@ import type {
   SizingSystem,
 } from '@/types/footwear';
 
-function normalizeSizingSystem(val: unknown): SizingSystem {
+export function normalizeSizingSystem(val: unknown): SizingSystem {
   const s = String(val ?? 'EU').toUpperCase();
-  if (s === 'UK' || s === 'US' || s === 'EU') return s;
+  if (s === 'UK' || s === 'US' || s === 'EU' || s === 'STANDARD') return s;
   return 'EU';
 }
 
+export function isBagCategoryName(name?: string | null): boolean {
+  const lower = (name ?? '').toLowerCase();
+  return (
+    lower.includes('bag') ||
+    lower.includes('handbag') ||
+    lower.includes('purse') ||
+    lower.includes('clutch') ||
+    lower.includes('tote') ||
+    lower.includes('backpack') ||
+    lower.includes('wallet')
+  );
+}
+
+export function extractCategorySizeOptions(attributeSchema: unknown): string[] {
+  if (!attributeSchema || typeof attributeSchema !== 'object') return [];
+  const raw = (attributeSchema as Record<string, unknown>).size_options;
+  if (!Array.isArray(raw)) return [];
+  return Array.from(
+    new Set(
+      raw
+        .map((v) => String(v ?? '').trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
 export function generateBarcodeValue(sku: string, index = 0): string {
-  const clean = sku.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 10) || 'FTW';
+  const clean = sku.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 10) || 'PRD';
   const rand = Math.floor(1000 + Math.random() * 9000);
   return `ZR-${clean}-${String(index + 1).padStart(2, '0')}${rand}`;
 }
@@ -28,18 +54,20 @@ export function buildVariantName(
   const colour = colourName.trim() || 'Standard';
   const size = sizeName.trim();
   if (!size) return colour;
+  if (sizingSystem === 'STANDARD') return `${colour} · ${size}`;
   return `${colour} · ${sizingSystem} ${size}`;
 }
 
 export function buildVariantSku(baseSku: string, colourName: string, sizeName: string): string {
-  const base = baseSku.trim().toUpperCase().replace(/\s+/g, '-') || 'SHOE';
+  const base = baseSku.trim().toUpperCase().replace(/\s+/g, '-') || 'ITEM';
   const col = (colourName.trim() || 'STD').replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase() || 'STD';
   const sz = sizeName.trim().replace(/[^A-Za-z0-9.]/g, '').toUpperCase();
   return sz ? `${base}-${col}-${sz}` : `${base}-${col}`;
 }
 
-export function inferFootwearArt(footwearType?: string | null): 'sneaker' | 'chappal' | 'khussa' {
-  const lower = (footwearType ?? '').toLowerCase();
+export function inferFootwearArt(nameOrType?: string | null): 'sneaker' | 'chappal' | 'khussa' | 'bag' {
+  const lower = (nameOrType ?? '').toLowerCase();
+  if (isBagCategoryName(lower)) return 'bag';
   if (lower.includes('sandal') || lower.includes('slipper')) return 'chappal';
   if (lower.includes('formal') || lower.includes('heel') || lower.includes('flat') || lower.includes('khussa')) {
     return 'khussa';
@@ -168,7 +196,7 @@ export async function fetchHydratedFootwearProducts(params: {
     variantQuery = variantQuery.eq('is_active', true);
   }
 
-  const [variantsRes, imagesRes, attrRes] = await Promise.all([
+  const [variantsRes, imagesRes, attrRes, allCategoriesRes] = await Promise.all([
     variantQuery,
     supabase
       .from('product_images')
@@ -183,7 +211,25 @@ export async function fetchHydratedFootwearProducts(params: {
       .eq('business_id', businessId)
       .eq('name', 'Sizing System')
       .maybeSingle(),
+    supabase
+      .from('categories')
+      .select('id, name, parent_id, art_id')
+      .eq('business_id', businessId)
+      .is('deleted_at', null),
   ]);
+
+  const categoryById = new Map<
+    string,
+    { id: string; name: string; parent_id: string | null; art_id: string | null }
+  >();
+  for (const c of (allCategoriesRes.data ?? []) as Array<{
+    id: string;
+    name: string;
+    parent_id: string | null;
+    art_id: string | null;
+  }>) {
+    categoryById.set(c.id, c);
+  }
 
   if (variantsRes.error) {
     throw new Error(`Failed to load product variants: ${variantsRes.error.message}`);
@@ -410,17 +456,35 @@ export async function fetchHydratedFootwearProducts(params: {
     ).length;
     const outOfStockVariants = variants.filter((v) => v.stockOnHand <= 0).length;
 
-    const categoryObj = Array.isArray(p.categories) ? p.categories[0] ?? null : p.categories;
-    const footwearType = meta.footwear_type || categoryObj?.name || 'Sneakers';
+    const categoryObj =
+      (p.category_id ? categoryById.get(p.category_id) : null) ??
+      (Array.isArray(p.categories) ? p.categories[0] ?? null : p.categories);
+    const parentCatId =
+      categoryObj && 'parent_id' in categoryObj && typeof categoryObj.parent_id === 'string'
+        ? categoryObj.parent_id
+        : null;
+    const parentCatObj = parentCatId ? categoryById.get(parentCatId) ?? null : null;
+
+    const categoryName = categoryObj?.name || meta.footwear_type || 'General';
+    const parentCategoryId = parentCatObj?.id ?? null;
+    const parentCategoryName = parentCatObj?.name ?? null;
+    const categoryPath = parentCategoryName
+      ? `${parentCategoryName} › ${categoryName}`
+      : categoryName;
+
+    const footwearType = meta.footwear_type || categoryName;
     const sizingSystem = normalizeSizingSystem(
-      meta.sizing_system || variants[0]?.sizingSystem || 'EU',
+      meta.sizing_system || variants[0]?.sizingSystem || (isBagCategoryName(categoryPath) ? 'STANDARD' : 'EU'),
     );
 
     return {
       id: p.id,
       businessId: p.business_id,
       categoryId: p.category_id,
-      categoryName: categoryObj?.name || footwearType,
+      categoryName,
+      parentCategoryId,
+      parentCategoryName,
+      categoryPath,
       sku: p.sku,
       name: p.name,
       brand: p.brand,
@@ -432,8 +496,8 @@ export async function fetchHydratedFootwearProducts(params: {
       soleMaterial: meta.sole_material ?? null,
       upperMaterial: meta.upper_material ?? null,
       sizingSystem,
-      artId: p.art_id || categoryObj?.art_id || inferFootwearArt(footwearType),
-      unitOfMeasure: p.unit_of_measure || 'pair',
+      artId: p.art_id || categoryObj?.art_id || inferFootwearArt(categoryPath || footwearType),
+      unitOfMeasure: p.unit_of_measure || (isBagCategoryName(categoryPath) ? 'piece' : 'pair'),
       baseCostPrice: Number(p.base_cost_price ?? 0),
       baseSellingPrice: Number(p.base_selling_price ?? 0),
       isActive: p.is_active,
