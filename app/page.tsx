@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
+import { isNavModuleEnabled } from '@/constants/navigation';
 
 export default function HomePage() {
-  redirect('/dashboard');
+  redirect(isNavModuleEnabled('home') ? '/dashboard' : '/inventory');
 }

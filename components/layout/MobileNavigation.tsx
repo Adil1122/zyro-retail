@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { LayoutGrid } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
-import type { NavItemConfig } from '@/constants/navigation';
+import { isNavModuleEnabled, type NavItemConfig } from '@/constants/navigation';
 import { useZyro } from '@/hooks/useZyro';
 import { getAllowedNavItems } from '@/lib/permissions';
 import { NavIcon } from './Sidebar';
@@ -32,8 +32,25 @@ export function MobileNavigation() {
     <>
       <nav className="fixed bottom-0 inset-x-0 z-40 h-[64px] bg-white border-t border-[#E7E0D7] flex items-center">
         {tabs.map((n) => {
-          const on = isActive(n);
+          const enabled = isNavModuleEnabled(n.id);
+          const on = enabled && isActive(n);
           const label = t(n.id === 'bills' ? 'billsShort' : n.id);
+          if (!enabled) {
+            return (
+              <div
+                key={n.id}
+                role="link"
+                aria-disabled="true"
+                title="Temporarily inactive"
+                className="flex-1 h-full flex flex-col items-center justify-center gap-[2px] text-[12px] text-[#52666A] font-medium opacity-40 cursor-not-allowed select-none"
+              >
+                <span className="w-[32px] h-[32px] rounded-full flex items-center justify-center">
+                  <NavIcon icon={n.icon} className="w-[18px] h-[18px]" />
+                </span>
+                <span className="truncate max-w-[70px]">{label}</span>
+              </div>
+            );
+          }
           return (
             <Link
               key={n.id}
@@ -77,7 +94,22 @@ export function MobileNavigation() {
       <Modal open={moreOpen} onClose={() => setMoreOpen(false)} title={t('more')} maxWidth="sm">
         <div className="grid grid-cols-2 gap-2.5">
           {rest.map((n) => {
-            const on = isActive(n);
+            const enabled = isNavModuleEnabled(n.id);
+            const on = enabled && isActive(n);
+            if (!enabled) {
+              return (
+                <div
+                  key={n.id}
+                  role="link"
+                  aria-disabled="true"
+                  title="Temporarily inactive"
+                  className="flex items-center gap-3 p-3.5 rounded-[12px] border border-[#E7E0D7] bg-[#FBF8F4] text-[14px] font-semibold text-[#52666A] opacity-45 cursor-not-allowed select-none"
+                >
+                  <NavIcon icon={n.icon} className="w-5 h-5 shrink-0 text-[#52666A]" />
+                  <span className="truncate">{t(n.id)}</span>
+                </div>
+              );
+            }
             return (
               <Link
                 key={n.id}

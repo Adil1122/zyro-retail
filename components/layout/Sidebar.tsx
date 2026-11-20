@@ -27,7 +27,7 @@ import {
   User,
   Users,
 } from 'lucide-react';
-import { ROLE_DISPLAY_NAMES, type NavItemConfig } from '@/constants/navigation';
+import { isNavModuleEnabled, ROLE_DISPLAY_NAMES, type NavItemConfig } from '@/constants/navigation';
 import { SignOutConfirmModal } from '@/features/auth/components/SignOutConfirmModal';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 import { useZyro } from '@/hooks/useZyro';
@@ -128,7 +128,7 @@ export function Sidebar({ mode }: { mode: 'desk' | 'tablet' }) {
     setRole(target);
     setStaffMenu(false);
     notify(`Switched active view to ${ROLE_DISPLAY_NAMES[target]}`, 'info');
-    router.push('/dashboard');
+    router.push(isNavModuleEnabled('home') ? '/dashboard' : '/inventory');
   };
 
   const activeRoleLabel = auth.activeMembership?.roleDisplayName || ROLE_DISPLAY_NAMES[role];
@@ -291,8 +291,25 @@ export function Sidebar({ mode }: { mode: 'desk' | 'tablet' }) {
         </button>
 
         {mainNav.map((n) => {
-          const on = isActive(n);
+          const enabled = isNavModuleEnabled(n.id);
+          const on = enabled && isActive(n);
           const label = t(n.id === 'bills' ? 'billsShort' : n.id);
+          if (!enabled) {
+            return (
+              <div
+                key={n.id}
+                role="link"
+                aria-disabled="true"
+                title="Temporarily inactive"
+                className="w-[72px] h-[56px] shrink-0 rounded-[12px] flex flex-col items-center justify-center gap-[2px] text-[13px] text-[#A8C3C5] font-medium opacity-40 cursor-not-allowed select-none"
+              >
+                <span className="w-[32px] h-[32px] rounded-full flex items-center justify-center bg-[rgba(244,239,233,0.08)] text-[#A8C3C5]">
+                  <NavIcon icon={n.icon} className="w-[17px] h-[17px]" />
+                </span>
+                <span className="max-w-[70px] truncate">{label}</span>
+              </div>
+            );
+          }
           return (
             <Link
               key={n.id}
@@ -388,19 +405,36 @@ export function Sidebar({ mode }: { mode: 'desk' | 'tablet' }) {
             <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#52666A]">
               {t('backOffice')}
             </div>
-            {extraNav.map((n) => (
-              <Link
-                key={n.id}
-                href={n.href}
-                onClick={() => setMoreOpen(false)}
-                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-[10px] text-[14px] font-medium ${
-                  isActive(n) ? 'bg-[#FCEFE4] text-[#8A3D12] font-semibold' : 'hover:bg-[#F8F4EF]'
-                }`}
-              >
-                <NavIcon icon={n.icon} className="w-4 h-4" />
-                <span>{t(n.id)}</span>
-              </Link>
-            ))}
+            {extraNav.map((n) => {
+              const enabled = isNavModuleEnabled(n.id);
+              if (!enabled) {
+                return (
+                  <div
+                    key={n.id}
+                    role="link"
+                    aria-disabled="true"
+                    title="Temporarily inactive"
+                    className="flex items-center gap-2.5 px-3 py-2.5 rounded-[10px] text-[14px] font-medium text-[#52666A] opacity-45 cursor-not-allowed select-none"
+                  >
+                    <NavIcon icon={n.icon} className="w-4 h-4" />
+                    <span>{t(n.id)}</span>
+                  </div>
+                );
+              }
+              return (
+                <Link
+                  key={n.id}
+                  href={n.href}
+                  onClick={() => setMoreOpen(false)}
+                  className={`flex items-center gap-2.5 px-3 py-2.5 rounded-[10px] text-[14px] font-medium ${
+                    isActive(n) ? 'bg-[#FCEFE4] text-[#8A3D12] font-semibold' : 'hover:bg-[#F8F4EF]'
+                  }`}
+                >
+                  <NavIcon icon={n.icon} className="w-4 h-4" />
+                  <span>{t(n.id)}</span>
+                </Link>
+              );
+            })}
           </div>
         )}
 
@@ -471,8 +505,25 @@ export function Sidebar({ mode }: { mode: 'desk' | 'tablet' }) {
       <div className="flex-1 min-h-0 overflow-y-auto flex flex-col">
         <nav className="flex flex-col">
           {mainNav.map((n) => {
-            const on = isActive(n);
+            const enabled = isNavModuleEnabled(n.id);
+            const on = enabled && isActive(n);
             const isSell = n.href === '/pos';
+            if (!enabled) {
+              return (
+                <div
+                  key={n.id}
+                  role="link"
+                  aria-disabled="true"
+                  title="Temporarily inactive"
+                  className="h-[46px] shrink-0 rounded-[12px] flex items-center gap-3 px-[10px] text-[15px] text-[#A8C3C5] font-medium opacity-40 cursor-not-allowed select-none"
+                >
+                  <span className="w-[32px] h-[32px] rounded-full flex items-center justify-center shrink-0 bg-[rgba(244,239,233,0.08)] text-[#A8C3C5]">
+                    <NavIcon icon={n.icon} className="w-[17px] h-[17px]" />
+                  </span>
+                  <span className="flex-1 min-w-0 truncate">{t(n.id)}</span>
+                </div>
+              );
+            }
             return (
               <Link
                 key={n.id}
@@ -506,7 +557,24 @@ export function Sidebar({ mode }: { mode: 'desk' | 'tablet' }) {
             </div>
             <nav className="flex flex-col">
               {officeNav.map((n) => {
-                const on = isActive(n);
+                const enabled = isNavModuleEnabled(n.id);
+                const on = enabled && isActive(n);
+                if (!enabled) {
+                  return (
+                    <div
+                      key={n.id}
+                      role="link"
+                      aria-disabled="true"
+                      title="Temporarily inactive"
+                      className="h-[46px] shrink-0 rounded-[12px] flex items-center gap-3 px-[10px] text-[15px] text-[#A8C3C5] font-medium opacity-40 cursor-not-allowed select-none"
+                    >
+                      <span className="w-[32px] h-[32px] rounded-full flex items-center justify-center shrink-0 bg-[rgba(244,239,233,0.08)] text-[#A8C3C5]">
+                        <NavIcon icon={n.icon} className="w-[17px] h-[17px]" />
+                      </span>
+                      <span className="flex-1 min-w-0 truncate">{t(n.id)}</span>
+                    </div>
+                  );
+                }
                 return (
                   <Link
                     key={n.id}
@@ -539,7 +607,24 @@ export function Sidebar({ mode }: { mode: 'desk' | 'tablet' }) {
         {footNav.length > 0 && (
           <nav className="flex flex-col mt-2">
             {footNav.map((n) => {
-              const on = isActive(n);
+              const enabled = isNavModuleEnabled(n.id);
+              const on = enabled && isActive(n);
+              if (!enabled) {
+                return (
+                  <div
+                    key={n.id}
+                    role="link"
+                    aria-disabled="true"
+                    title="Temporarily inactive"
+                    className="h-[46px] shrink-0 rounded-[12px] flex items-center gap-3 px-[10px] text-[15px] text-[#A8C3C5] font-medium opacity-40 cursor-not-allowed select-none"
+                  >
+                    <span className="w-[32px] h-[32px] rounded-full flex items-center justify-center shrink-0 bg-[rgba(244,239,233,0.08)] text-[#A8C3C5]">
+                      <NavIcon icon={n.icon} className="w-[17px] h-[17px]" />
+                    </span>
+                    <span className="flex-1 min-w-0 truncate">{t(n.id)}</span>
+                  </div>
+                );
+              }
               return (
                 <Link
                   key={n.id}

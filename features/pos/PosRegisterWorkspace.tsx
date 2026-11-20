@@ -25,6 +25,7 @@ import { ProductArtwork } from '@/components/domain/ProductArtwork';
 import { FootwearProductSelector } from '@/components/domain/ProductSelector';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { isNavModuleEnabled } from '@/constants/navigation';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Dropdown } from '@/components/ui/Dropdown';
 import { SearchInput } from '@/components/ui/SearchInput';
@@ -680,7 +681,7 @@ export function PosRegisterWorkspace() {
       <header className="h-[58px] shrink-0 bg-[#08343A] text-white px-3 sm:px-5 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2.5 min-w-0">
           <Link
-            href="/dashboard"
+            href={isNavModuleEnabled('home') ? '/dashboard' : '/inventory'}
             className="px-2.5 py-1.5 rounded-[9px] bg-white/10 hover:bg-white/15 text-[13px] font-semibold flex items-center gap-1.5"
           >
             <ArrowLeft className="w-4 h-4" />

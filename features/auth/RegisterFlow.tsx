@@ -23,6 +23,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { categoriesForKit, kitById } from '@/constants/kits';
+import { isNavModuleEnabled } from '@/constants/navigation';
 import { DevOtpNotice } from '@/features/auth/components/DevOtpNotice';
 import { PhoneInputField } from '@/features/auth/components/PhoneInputField';
 import { useAuth } from '@/features/auth/hooks/useAuth';
@@ -54,6 +55,12 @@ const KIT_ORDER: ShopKitId[] = [
   'mobile',
   'other',
 ];
+
+/**
+ * Temporary restriction: only show Footwear during registration.
+ * Switch back to `KIT_ORDER` when other retail categories are enabled.
+ */
+const VISIBLE_REGISTER_KITS: ShopKitId[] = ['shoes'];
 
 const KIT_META: Record<
   ShopKitId,
@@ -421,8 +428,8 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
     };
     onNext = () => void handleCreateAccount();
   } else if (step === 'ready') {
-    nextLabel = 'Set up this counter';
-    onNext = () => router.push('/setup');
+    nextLabel = isNavModuleEnabled('home') ? 'Set up this counter' : 'Open Stock';
+    onNext = () => router.push(isNavModuleEnabled('home') ? '/setup' : '/inventory');
   }
 
   const TITLES: Record<RegStep, { t: string; s: string }> = {
@@ -464,36 +471,60 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
     'Your Owner Home and live session',
   ];
 
-  const nextCards = [
-    {
-      n: 1,
-      t: 'Set up this counter',
-      s: 'Pick the printer and print a test receipt. About 3 minutes.',
-      href: '/setup',
-      hi: true,
-    },
-    {
-      n: 2,
-      t: 'Add your first items',
-      s: 'Add item asks only what your kind of shop needs, then makes labels.',
-      href: '/inventory/items/new',
-      hi: false,
-    },
-    {
-      n: 3,
-      t: 'Invite your staff',
-      s: 'Send cashiers and stockkeepers a secure invite link to join your branch.',
-      href: '/staff',
-      hi: false,
-    },
-    {
-      n: 4,
-      t: 'Open Owner Home',
-      s: 'Review today’s sales, cash drawer, stock watch and payables.',
-      href: '/home',
-      hi: false,
-    },
-  ];
+  const nextCards = isNavModuleEnabled('home')
+    ? [
+        {
+          n: 1,
+          t: 'Set up this counter',
+          s: 'Pick the printer and print a test receipt. About 3 minutes.',
+          href: '/setup',
+          hi: true,
+        },
+        {
+          n: 2,
+          t: 'Add your first items',
+          s: 'Add item asks only what your kind of shop needs, then makes labels.',
+          href: '/inventory/items/new',
+          hi: false,
+        },
+        {
+          n: 3,
+          t: 'Invite your staff',
+          s: 'Send cashiers and stockkeepers a secure invite link to join your branch.',
+          href: '/staff',
+          hi: false,
+        },
+        {
+          n: 4,
+          t: 'Open Owner Home',
+          s: 'Review today’s sales, cash drawer, stock watch and payables.',
+          href: '/home',
+          hi: false,
+        },
+      ]
+    : [
+        {
+          n: 1,
+          t: 'Add your first footwear items',
+          s: 'Add footwear products with sizes, colours, barcodes and opening stock.',
+          href: '/inventory/items/new',
+          hi: true,
+        },
+        {
+          n: 2,
+          t: 'Manage Stock',
+          s: 'View branch stock levels, adjust quantities and run stock counts.',
+          href: '/inventory',
+          hi: false,
+        },
+        {
+          n: 3,
+          t: 'Open Sell register',
+          s: 'Start selling footwear at the counter with barcode scanning and receipts.',
+          href: '/pos',
+          hi: false,
+        },
+      ];
 
   const formatTimer = (sec: number) => {
     const m = Math.floor(sec / 60);
@@ -524,8 +555,8 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
       onNext={onNext}
       nextDisabled={!!why}
       nextBusy={busy}
-      secondaryLabel={step === 'ready' ? 'Go to Owner Home' : undefined}
-      onSecondary={step === 'ready' ? () => router.push('/home') : undefined}
+      secondaryLabel={step === 'ready' ? (isNavModuleEnabled('home') ? 'Go to Owner Home' : 'Open Sell register') : undefined}
+      onSecondary={step === 'ready' ? () => router.push(isNavModuleEnabled('home') ? '/home' : '/pos') : undefined}
       cornerBadge={
         step === 'ready' ? (
           <span
@@ -995,7 +1026,7 @@ export function RegisterFlow({ initialStep = 'phone' }: { initialStep?: RegStep 
       {step === 'kind' && (
         <>
           <div role="radiogroup" aria-label="What do you sell?" className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
-            {KIT_ORDER.map((id) => {
+            {VISIBLE_REGISTER_KITS.map((id) => {
               const on = id === selectedKit;
               const k = KIT_META[id];
               const Icon = k.icon;

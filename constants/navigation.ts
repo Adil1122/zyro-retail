@@ -47,6 +47,19 @@ export const NAV_ITEMS: NavItemConfig[] = [
   { id: 'settings', href: '/settings', roles: ['owner'], group: 'foot', icon: 'settings' },
 ];
 
+/**
+ * Temporary restriction: only Sell and Stock are enabled in the left navigation.
+ * Set to `null` to re-enable all navigation modules.
+ */
+export const TEMPORARILY_ENABLED_NAV_IDS: ReadonlySet<NavItemConfig['id']> | null = new Set([
+  'sell',
+  'stock',
+]);
+
+export function isNavModuleEnabled(id: NavItemConfig['id']): boolean {
+  return TEMPORARILY_ENABLED_NAV_IDS === null || TEMPORARILY_ENABLED_NAV_IDS.has(id);
+}
+
 export const ROLE_DISPLAY_NAMES: Record<RoleId, string> = {
   owner: 'Owner',
   cashier: 'Cashier',

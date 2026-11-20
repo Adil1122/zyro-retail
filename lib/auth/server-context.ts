@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers';
 import type { NextRequest } from 'next/server';
+import { isNavModuleEnabled } from '@/constants/navigation';
 import { isInternalAuthEmail } from '@/lib/auth/supabase-phone-signin';
 import {
   createSupabaseServerClient,
@@ -39,6 +40,24 @@ export function getInitials(fullName: string): string {
 export function resolveDashboardRouteForMembership(membership: WorkspaceMembershipSummary): string {
   const perms = new Set(membership.permissions);
   const roleKey = membership.roleName.toLowerCase();
+
+  // While non-Sell/Stock modules are temporarily inactive, land directly on Stock (with left menu visible)
+  // or Sell if the role only has POS access.
+  if (!isNavModuleEnabled('home')) {
+    if (
+      roleKey === 'owner' ||
+      roleKey === 'inventory' ||
+      roleKey === 'stockkeeper' ||
+      perms.has('inventory.view') ||
+      perms.has('inventory.manage')
+    ) {
+      return '/inventory';
+    }
+    if (roleKey === 'cashier' || perms.has('pos.sell')) {
+      return '/pos';
+    }
+    return '/inventory';
+  }
 
   if (roleKey === 'owner' || perms.has('dashboard.owner.view') || perms.has('settings.manage')) {
     return '/home';
