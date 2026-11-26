@@ -1,0 +1,6 @@
+{
+  "name": "ZYRO Retail POS",
+  "description": "Modular retail Point of Sale, inventory, khata, purchasing, orders, cash shift, payroll, and reporting application.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

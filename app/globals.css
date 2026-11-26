@@ -1,0 +1,320 @@
+@import "tailwindcss";
+
+:root {
+  --bg-page: #F4EFE9;
+  --bg-card: #FFFFFF;
+  --bg-raised: #FBF8F4;
+  --bg-neutral: #F1EBE3;
+  --bg-track: #EAE3D9;
+  --bg-hover: #F8F4EF;
+
+  --teal: #08343A;
+  --teal-hover: #0B4A52;
+  --teal-text: #0E5E66;
+
+  --copper: #E58A4E;
+  --copper-hover: #EC9A63;
+  --copper-deep: #C9682E;
+  --copper-tint: #FCEFE4;
+  --copper-tint-hover: #FCE1CB;
+  --copper-line: #E2B48F;
+  --copper-ink: #8A3D12;
+
+  --ink-strong: #0B2A2F;
+  --ink-body: #3D5357;
+  --ink-muted: #52666A;
+  --ink-dim: #5F7174;
+
+  --line-divider: #F1EBE3;
+  --line-card: #E7E0D7;
+  --line-control: #D6CDC1;
+  --line-field: #8A8276;
+  --line-dashed: #C9C1B6;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-page);
+  color: var(--ink-strong);
+  font-family: var(--font-inter, Inter, 'Segoe UI', Roboto, system-ui, sans-serif);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+html[lang="ur"] body {
+  font-family: var(--font-urdu, 'Noto Naskh Arabic', serif);
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: #D6CDC1 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #D6CDC1;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::selection {
+  background: #FCE1CB;
+  color: #0B2A2F;
+}
+
+.font-display {
+  font-family: var(--font-inter-tight, 'Inter Tight', Inter, sans-serif);
+}
+
+.mono {
+  font-family: var(--font-mono, 'JetBrains Mono', ui-monospace, monospace);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.rs {
+  font-size: 0.6em;
+  font-weight: 500;
+  margin-inline-end: 0.24em;
+  letter-spacing: 0;
+}
+
+button,
+.hit {
+  position: relative;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+:focus-visible {
+  outline: 2px solid #C9682E;
+  outline-offset: 2px;
+}
+
+.field {
+  border-color: #8A8276;
+  transition: border-color 0.15s ease-out, box-shadow 0.15s ease-out;
+}
+
+.field:focus-within {
+  border-color: #C9682E;
+  box-shadow: 0 0 0 3px rgba(229, 138, 78, 0.24);
+}
+
+.field.err {
+  border-color: #B42318;
+}
+
+.bp {
+  background-color: #E58A4E;
+  color: #08343A;
+  transition: background-color 0.1s ease-out, transform 0.1s ease-out;
+}
+.bp:hover:not(:disabled) {
+  background-color: #EC9A63;
+}
+.bp:active:not(:disabled) {
+  transform: scale(0.98);
+  background-color: #E58A4E;
+}
+.bp:disabled {
+  background-color: #EAE3D9;
+  color: #52666A;
+}
+
+.bk {
+  background-color: #08343A;
+  color: #FFFFFF;
+  transition: background-color 0.1s ease-out, transform 0.1s ease-out;
+}
+.bk:hover:not(:disabled) {
+  background-color: #0B4A52;
+}
+.bk:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.bk:disabled {
+  background-color: #EAE3D9;
+  color: #52666A;
+}
+
+.bs {
+  background-color: #FFFFFF;
+  color: #0B2A2F;
+  border: 1px solid #D6CDC1;
+  transition: background-color 0.1s ease-out, transform 0.1s ease-out;
+}
+.bs:hover:not(:disabled) {
+  background-color: #F8F4EF;
+}
+.bs:active:not(:disabled) {
+  transform: scale(0.98);
+  background-color: #F1EBE3;
+}
+
+.bd {
+  background-color: #B42318;
+  color: #FFFFFF;
+  transition: background-color 0.1s ease-out, transform 0.1s ease-out;
+}
+.bd:hover:not(:disabled) {
+  background-color: #9A1E14;
+}
+.bd:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.bt:hover {
+  color: #08343A;
+  text-decoration: underline;
+}
+
+.side {
+  transition: background-color 0.15s ease-out;
+}
+.side:hover {
+  background-color: rgba(255, 255, 255, 0.07);
+}
+
+.rail {
+  transition: background-color 0.15s ease-out, color 0.15s ease-out;
+}
+.rail:hover {
+  background-color: rgba(255, 255, 255, 0.07);
+  color: #FFFFFF;
+}
+
+.row {
+  transition: background-color 0.12s ease-out;
+}
+.row:hover {
+  background-color: #FBF8F4;
+}
+
+.opt {
+  transition: border-color 0.15s ease-out;
+}
+.opt:hover {
+  border-color: #E2B48F;
+}
+
+.key {
+  transition: background-color 0.1s, transform 0.1s;
+}
+.key:hover {
+  background-color: #F1EBE3;
+}
+.key:active {
+  transform: scale(0.96);
+  background-color: #EAE3D9;
+}
+
+.tile {
+  transition: border-color 0.15s ease-out, transform 0.1s ease-out, background-color 0.15s ease-out;
+}
+.tile:hover {
+  border-color: #E2B48F;
+}
+.tile:active {
+  transform: scale(0.98);
+}
+
+.ph {
+  background-image:
+    radial-gradient(circle at 50% 30%, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0) 72%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0) 60%, rgba(11, 42, 47, 0.06) 100%);
+}
+.ph svg {
+  filter: drop-shadow(0 4px 4px rgba(11, 42, 47, 0.18));
+}
+
+.skel {
+  background: linear-gradient(90deg, #F1EBE3 0px, #F8F4EF 160px, #F1EBE3 320px);
+  background-size: 920px 100%;
+  animation: zshimmer 1.3s linear infinite;
+}
+
+@keyframes zshimmer {
+  0% { background-position: -460px 0; }
+  100% { background-position: 460px 0; }
+}
+
+@keyframes zup {
+  0% { opacity: 0; transform: translateY(10px); }
+  100% { opacity: 1; transform: none; }
+}
+
+@keyframes zsheet {
+  0% { opacity: 0; transform: translateY(18px) scale(0.99); }
+  100% { opacity: 1; transform: none; }
+}
+
+@keyframes zdrawer {
+  0% { opacity: 0; transform: translateX(28px); }
+  100% { opacity: 1; transform: none; }
+}
+
+@keyframes zscanline {
+  0% { transform: translateY(0); }
+  50% { transform: translateY(140px); }
+  100% { transform: translateY(0); }
+}
+
+.anim-up { animation: zup 0.15s ease-out; }
+.anim-sheet { animation: zsheet 0.2s ease-out; }
+.anim-drawer { animation: zdrawer 0.25s ease-out; }
+.scanline { animation: zscanline 1.8s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .zyro-print-area,
+  .zyro-print-area * {
+    visibility: visible;
+  }
+  .zyro-print-area {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 80mm;
+    max-width: 100%;
+    margin: 0;
+    padding: 8px;
+    background: #FFFFFF !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+}
+
